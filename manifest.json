@@ -1,0 +1,22 @@
+
+{
+  "name": "Climatic Pro",
+  "short_name": "Climatic",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#111921",
+  "theme_color": "#197fe6",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "https://placehold.co/192x192/197fe6/ffffff?text=CP",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "https://placehold.co/512x512/197fe6/ffffff?text=Climatic",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

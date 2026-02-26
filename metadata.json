@@ -1,0 +1,5 @@
+{
+  "name": "Climatic Pro",
+  "description": "Aplicativo de Monitoramento de Ativo para sensores inteligentes, incluindo visualização de dados em tempo real, gráficos históricos e configuração de alertas.",
+  "requestFramePermissions": []
+}

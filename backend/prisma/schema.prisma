@@ -1,0 +1,166 @@
+// schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id          String    @id @default(uuid())
+  email       String?   @unique
+  phone       String?   @unique
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  lastLoginAt DateTime?
+
+  sensors   Sensor[]
+  alerts    Alert[]
+  auditLogs AuditLog[]
+  fcmTokens FCMToken[]
+
+  @@index([email])
+  @@index([phone])
+}
+
+model VerificationCode {
+  id         String   @id @default(uuid())
+  identifier String // email or phone
+  code       String
+  expiresAt  DateTime
+  attempts   Int      @default(0)
+  createdAt  DateTime @default(now())
+
+  @@index([identifier, expiresAt])
+}
+
+model Sensor {
+  id           String     @id @default(uuid())
+  userId       String
+  mac          String
+  alias        String?
+  deviceType   DeviceType
+  isActive     Boolean    @default(true)
+  lastSeenAt   DateTime?
+  batteryLevel Int?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  readings    SensorReading[]
+  alertConfig AlertConfig?
+  alerts      Alert[]
+
+  @@unique([userId, mac])
+  @@index([userId])
+  @@index([mac])
+  @@index([lastSeenAt])
+}
+
+enum DeviceType {
+  F525_GATEWAY
+  JHT_UP_39F5
+  WIFI_PT100_35F5
+  JW_U_WATER
+}
+
+model SensorReading {
+  id          String   @id @default(uuid())
+  sensorId    String
+  timestamp   DateTime @default(now())
+  temperature Float?
+  humidity    Float?
+  co2         Float?
+  pm25        Float?
+  tvoc        Float?
+  pressure    Float?
+  waterLevel  Float?
+
+  sensor Sensor @relation(fields: [sensorId], references: [id], onDelete: Cascade)
+
+  @@index([sensorId, timestamp])
+  @@index([timestamp])
+}
+
+model AlertConfig {
+  id        String  @id @default(uuid())
+  sensorId  String  @unique
+  isEnabled Boolean @default(true)
+
+  tempMin     Float?
+  tempMax     Float?
+  humidityMin Float?
+  humidityMax Float?
+  co2Max      Float?
+  pm25Max     Float?
+  tvocMax     Float?
+
+  cooldownMinutes Int      @default(15)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  sensor Sensor @relation(fields: [sensorId], references: [id], onDelete: Cascade)
+}
+
+model Alert {
+  id             String         @id @default(uuid())
+  userId         String
+  sensorId       String
+  parameter      String
+  value          Float
+  threshold      Float
+  condition      AlertCondition
+  isAcknowledged Boolean        @default(false)
+  createdAt      DateTime       @default(now())
+  acknowledgedAt DateTime?
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sensor Sensor @relation(fields: [sensorId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([sensorId, createdAt])
+}
+
+enum AlertCondition {
+  ABOVE_MAX
+  BELOW_MIN
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String
+  action     String
+  resource   String
+  resourceId String?
+  metadata   Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([action, createdAt])
+}
+
+model FCMToken {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  platform  Platform
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+enum Platform {
+  ANDROID
+  IOS
+  WEB
+}
