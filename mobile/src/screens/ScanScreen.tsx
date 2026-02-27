@@ -4,6 +4,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { ChevronLeft, Bluetooth, RefreshCw, Plus } from 'lucide-react-native';
 import * as Location from 'expo-location';
 import { api } from '../services/api';
+import { bleService } from '../services/ble.service';
+import { Linking } from 'react-native';
 
 export const ScanScreen = ({ navigation }: any) => {
   const [isScanning, setIsScanning] = useState(false);
@@ -11,28 +13,48 @@ export const ScanScreen = ({ navigation }: any) => {
   const [registering, setRegistering] = useState<string | null>(null);
 
   const startScan = async () => {
-    const { status } = await Location.requestForegroundPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permissão Negada', 'O acesso à localização é necessário para buscar dispositivos Bluetooth próximos.');
-      return;
-    }
-
     setIsScanning(true);
     setDevices([]);
 
-    // Simulação de descoberta de dispositivos BLE
-    // Em um app real com build nativa, usaríamos react-native-ble-plx
-    setTimeout(() => {
-      setDevices([
-        { id: '1', name: 'JHT-F525 Gateway', mac: 'C1:32:71:39:72:95', type: 'F525_GATEWAY', rssi: -65 },
-        { id: '2', name: 'Wifi-PT100 Sensor', mac: '00:E8:31:CD:80:79', type: 'WIFI_PT100_35F5', rssi: -72 },
-      ]);
-      setIsScanning(false);
-    }, 3000);
+    try {
+      await bleService.startScan((device: any) => {
+        // Avoid duplicates by mac/id
+        setDevices(prev => {
+          const exists = prev.find(d => d.mac === device.mac || d.id === device.id);
+          if (exists) return prev.map(d => d.mac === device.mac || d.id === device.id ? { ...d, ...device } : d);
+          return [...prev, device];
+        });
+      });
+    } catch (err) {
+      const msg = String(err || '');
+      if (msg.includes('BluetoothDisabled') || msg.toLowerCase().includes('bluetooth')) {
+        Alert.alert(
+          'Bluetooth Desligado',
+          'O Bluetooth do dispositivo está desligado. Por favor ative o Bluetooth para buscar sensores.',
+          [
+            { text: 'Abrir Configurações', onPress: () => { try { Linking.openSettings(); } catch (e) {} } },
+            { text: 'Cancelar', style: 'cancel' }
+          ]
+        );
+      } else {
+        Alert.alert('Erro', 'Não foi possível iniciar a varredura BLE: ' + String(err));
+      }
+      // fallback to simulation for dev
+      setTimeout(() => {
+        setDevices([
+          { id: '1', name: 'JHT-F525 Gateway', mac: 'C1:32:71:39:72:95', type: 'F525_GATEWAY', rssi: -65 },
+          { id: '2', name: 'Wifi-PT100 Sensor', mac: '00:E8:31:CD:80:79', type: 'WIFI_PT100_35F5', rssi: -72 },
+        ]);
+        setIsScanning(false);
+      }, 1500);
+    }
   };
 
   useEffect(() => {
     startScan();
+    return () => {
+      try { bleService.stopScan(); } catch (e) {}
+    };
   }, []);
 
   const handleAddDevice = async (device: any) => {

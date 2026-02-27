@@ -20,6 +20,11 @@ apiClient.interceptors.request.use(
     if (token && config.headers) {
       config.headers['Authorization'] = `Bearer ${token}`;
     }
+    // Debug: log outgoing request method, url and Authorization header
+    try {
+      // eslint-disable-next-line no-console
+      console.log('[api.client] Request:', config.method, config.baseURL + config.url, 'Authorization:', config.headers?.Authorization);
+    } catch (e) {}
     return config;
   },
   (error) => Promise.reject(error)
@@ -39,6 +44,12 @@ apiClient.interceptors.response.use(
     if (error.response?.status === 401) {
       useAuthStore.getState().logout();
     }
+
+    // Debug: log response status and headers on error
+    try {
+      // eslint-disable-next-line no-console
+      console.log('[api.client] Response error:', error.response?.status, error.response?.headers);
+    } catch (e) {}
 
     return Promise.reject(error);
   }
