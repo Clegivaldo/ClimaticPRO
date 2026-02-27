@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, FlatList, ActivityIndicator, Alert, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ChevronLeft, Bluetooth, RefreshCw, Plus } from 'lucide-react-native';
+import IconFallback from '../components/IconFallback';
 import * as Location from 'expo-location';
 import { api } from '../services/api';
 import { bleService } from '../services/ble.service';
@@ -60,6 +60,25 @@ export const ScanScreen = ({ navigation }: any) => {
   const handleAddDevice = async (device: any) => {
     setRegistering(device.mac);
     try {
+      // Ensure Bluetooth is enabled before attempting to add a BLE device
+      try {
+        const on = await bleService.isBluetoothOn();
+        if (!on) {
+          Alert.alert(
+            'Bluetooth Desligado',
+            'Por favor ative o Bluetooth antes de adicionar este dispositivo.',
+            [
+              { text: 'Abrir Configurações', onPress: () => { try { Linking.openSettings(); } catch (e) {} } },
+              { text: 'Cancelar', style: 'cancel' }
+            ]
+          );
+          setRegistering(null);
+          return;
+        }
+      } catch (e) {
+        // If we can't determine Bluetooth state, continue (simulation/dev)
+      }
+
       await api.registerSensor(device.mac, device.type, device.name);
       Alert.alert('Sucesso', 'Sensor adicionado com sucesso!');
       navigation.navigate('Dashboard');
@@ -74,7 +93,7 @@ export const ScanScreen = ({ navigation }: any) => {
     <View style={styles.deviceCard}>
       <View style={styles.deviceInfo}>
         <View style={styles.iconContainer}>
-          <Bluetooth size={20} color="#197fe6" />
+          <IconFallback name="Bluetooth" size={20} color="#197fe6" />
         </View>
         <View>
           <Text style={styles.deviceName}>{item.name}</Text>
@@ -87,10 +106,10 @@ export const ScanScreen = ({ navigation }: any) => {
         onPress={() => handleAddDevice(item)}
         disabled={!!registering}
       >
-        {registering === item.mac ? (
+            {registering === item.mac ? (
           <ActivityIndicator size="small" color="#fff" />
         ) : (
-          <Plus size={20} color="#fff" />
+          <IconFallback name="Plus" size={20} color="#fff" />
         )}
       </TouchableOpacity>
     </View>
@@ -100,11 +119,11 @@ export const ScanScreen = ({ navigation }: any) => {
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-          <ChevronLeft size={24} color="#0f172a" />
+          <IconFallback name="ChevronLeft" size={24} color="#0f172a" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Buscar Sensores</Text>
         <TouchableOpacity onPress={startScan} disabled={isScanning} style={styles.refreshButton}>
-          <RefreshCw size={20} color={isScanning ? "#cbd5e1" : "#197fe6"} />
+          <IconFallback name="RefreshCw" size={20} color={isScanning ? "#cbd5e1" : "#197fe6"} />
         </TouchableOpacity>
       </View>
 

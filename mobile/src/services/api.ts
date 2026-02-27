@@ -33,6 +33,11 @@ class ApiService {
     return reading;
   }
 
+  async postSensorReading(sensorId: string, payload: any) {
+    const response = await apiClient.post(`/sensors/${sensorId}/data`, payload);
+    return response.data;
+  }
+
   async askAI(message: string) {
     const response = await apiClient.post('/ai/chat', { message });
     return response.data.data;

@@ -4,7 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LineChart } from 'react-native-chart-kit';
 import { api } from '../services/api';
 import { useSensorStore } from '../store/useSensorStore';
-import { ChevronLeft, Settings, Thermometer, Droplets, Zap } from 'lucide-react-native';
+import IconFallback from '../components/IconFallback';
 
 const screenWidth = Dimensions.get('window').width;
 
@@ -55,8 +55,8 @@ export const DetailsScreen = ({ route, navigation }: any) => {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-          <ChevronLeft size={24} color="#0f172a" />
+          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+          <IconFallback name="ChevronLeft" size={24} color="#0f172a" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>{sensor.alias || sensor.mac}</Text>
         <TouchableOpacity style={styles.settingsButton}>

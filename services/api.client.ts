@@ -7,7 +7,14 @@ import { useAuthStore } from '../store/useAuthStore';
  * Requirement 10.5: Request retry logic for offline support
  */
 
-const API_BASE_URL = import.meta.env['VITE_API_URL'] || 'http://localhost:3001/api/v1';
+// Resolve API base URL from available environment variables.
+// Avoid using `import.meta` directly because some bundlers/environments
+// (Metro/webpack for web) may not support `import.meta` and will throw.
+const API_BASE_URL = (
+  // Expo/CRA/Webpack provide process.env vars
+  (typeof process !== 'undefined' && (process.env.VITE_API_URL || process.env.EXPO_PUBLIC_API_URL))
+  // fallback to localhost
+  ) || 'http://localhost:3001/api/v1';
 
 const apiClient: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,

@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, TextInput, FlatList, KeyboardAvoidingView, Platform, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ChevronLeft, Send, Sparkles } from 'lucide-react-native';
+import IconFallback from '../components/IconFallback';
 import { api } from '../services/api';
 
 interface Message {
@@ -70,7 +70,7 @@ export const AiAssistantScreen = ({ navigation }: any) => {
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-          <ChevronLeft size={24} color="#0f172a" />
+          <IconFallback name="ChevronLeft" size={24} color="#0f172a" />
         </TouchableOpacity>
         <View style={styles.headerTitleContainer}>
           <Sparkles size={18} color="#6366f1" />
