@@ -53,24 +53,26 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onNavigate }) =>
       setIsTesting(true);
       setTestResult(null);
       try {
-          const url = `${testEndpoint}?${testParams}`;
-          // Use the raw request method to bypass our wrappers
-          const data: any = await api.request(url);
+          const url = `${testEndpoint}${testParams ? '?' + testParams : ''}`;
+          // Use the apiClient directly for debug tests
+          const response = await api.apiClient.get(url);
+          const data = response.data;
           
           let count = 0;
-          if (Array.isArray(data)) count = data.length;
-          else if (data && data.list) count = data.list.length;
-          else if (data && data.data) count = data.data.length;
+          if (data && data.data) {
+              if (Array.isArray(data.data)) count = data.data.length;
+              else if (data.data.items && Array.isArray(data.data.items)) count = data.data.items.length;
+          }
 
           setTestResult({
               success: true,
               count,
-              preview: JSON.stringify(data, null, 2).substring(0, 300) + '...'
+              preview: JSON.stringify(data, null, 2).substring(0, 500) + '...'
           });
       } catch (e: any) {
           setTestResult({
               success: false,
-              error: e.message
+              error: e.response?.data?.message || e.message
           });
       } finally {
           setIsTesting(false);

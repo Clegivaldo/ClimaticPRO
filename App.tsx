@@ -1,6 +1,7 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AppScreen, SensorData } from './types';
+import { useAuthStore } from './store/useAuthStore';
 import { DashboardScreen } from './screens/DashboardScreen';
 import { ScanScreen } from './screens/ScanScreen';
 import { DetailsScreen } from './screens/DetailsScreen';
@@ -14,9 +15,16 @@ import { ConnectionsScreen, CalibrationScreen, FirmwareScreen, HelpScreen, Priva
 import { AiAssistantScreen } from './screens/AiAssistantScreen';
 
 const App: React.FC = () => {
-  // Start at LOGIN screen
+  const isAuthenticated = useAuthStore(state => state.isAuthenticated);
+  // Start at DASHBOARD if authenticated, otherwise LOGIN
   const [currentScreen, setCurrentScreen] = useState<AppScreen>(AppScreen.LOGIN);
   const [navParams, setNavParams] = useState<any>(null);
+
+  useEffect(() => {
+    if (isAuthenticated && currentScreen === AppScreen.LOGIN) {
+      setCurrentScreen(AppScreen.DASHBOARD);
+    }
+  }, [isAuthenticated]);
 
   const navigate = (screen: AppScreen, params?: any) => {
     setNavParams(params);

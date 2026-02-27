@@ -1,29 +1,51 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AppScreen } from '../types';
 import { BottomNav } from '../components/BottomNav';
+import { api } from '../services/api';
 
 interface HistoryScreenProps {
   onNavigate: (screen: AppScreen, params?: any) => void;
 }
 
-// Mock Data for Global History
-const HISTORY_EVENTS = [
-  { id: 1, type: 'alarm', title: 'Temperatura Crítica', sensor: 'Adega de Vinhos', value: '18°C', time: '10 min atrás', read: false },
-  { id: 2, type: 'warning', title: 'Bateria Fraca', sensor: 'Quarto do Bebê', value: '15%', time: '2h atrás', read: true },
-  { id: 3, type: 'info', title: 'Sincronização Completa', sensor: 'Sensor Sala de Estar', value: null, time: '4h atrás', read: true },
-  { id: 4, type: 'alarm', title: 'Umidade Alta', sensor: 'Adega de Vinhos', value: '78%', time: 'Ontem', read: true },
-  { id: 5, type: 'info', title: 'Novo Dispositivo', sensor: 'Garagem', value: 'Pareado', time: 'Ontem', read: true },
-  { id: 6, type: 'warning', title: 'Conexão Perdida', sensor: 'Garagem', value: null, time: '2 dias atrás', read: true },
-  { id: 7, type: 'info', title: 'Exportação de Dados', sensor: 'Relatório Mensal', value: 'CSV', time: '3 dias atrás', read: true },
-];
-
 export const HistoryScreen: React.FC<HistoryScreenProps> = ({ onNavigate }) => {
   const [filter, setFilter] = useState<'all' | 'alarm' | 'warning'>('all');
+  const [events, setEvents] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchEvents = async () => {
+        setLoading(true);
+        try {
+            const data = await api.getGlobalAlertHistory();
+            if (data && data.items) {
+                setEvents(data.items);
+            }
+        } catch (error) {
+            console.error('Failed to fetch alert history:', error);
+        } finally {
+            setLoading(false);
+        }
+    };
+    fetchEvents();
+  }, []);
 
   const filteredEvents = filter === 'all' 
-    ? HISTORY_EVENTS 
-    : HISTORY_EVENTS.filter(e => e.type === filter);
+    ? events 
+    : events.filter(e => {
+        if (filter === 'alarm') return e.severity === 'CRITICAL';
+        if (filter === 'warning') return e.severity === 'WARNING';
+        return true;
+    });
+
+  const handleAcknowledge = async (alertId: string) => {
+      try {
+          await api.acknowledgeAlert(alertId);
+          setEvents(prev => prev.map(e => e.id === alertId ? { ...e, isAcknowledged: true } : e));
+      } catch (e) {
+          console.error('Failed to acknowledge alert');
+      }
+  };
 
   return (
     <div className="flex flex-col h-full bg-background-light dark:bg-background-dark overflow-hidden">

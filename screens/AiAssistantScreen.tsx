@@ -1,9 +1,9 @@
-
 import React, { useState, useEffect, useRef } from 'react';
-import { AppScreen, SensorData } from '../types';
+import { AppScreen } from '../types';
 import { BottomNav } from '../components/BottomNav';
-import { aiService } from '../services/ai';
 import { api } from '../services/api';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 interface AiAssistantScreenProps {
   onNavigate: (screen: AppScreen, params?: any) => void;
@@ -21,30 +21,7 @@ export const AiAssistantScreen: React.FC<AiAssistantScreenProps> = ({ onNavigate
   ]);
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [sensors, setSensors] = useState<SensorData[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const [hasKey, setHasKey] = useState(false);
-
-  useEffect(() => {
-    fetchSensors();
-  }, []);
-
-  const fetchSensors = async () => {
-    try {
-        const data = await api.getAllDeviceData();
-        if (Array.isArray(data)) {
-            setSensors(data);
-        } else {
-            // @ts-ignore
-            setSensors(data.list || []);
-        }
-    } catch (e: any) {
-        // Suppress rate limit errors from console, as they are handled by cache/fallback
-        if (!e.message?.includes('Muitas requisições')) {
-             console.error("Failed to fetch sensors context", e);
-        }
-    }
-  };
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -63,11 +40,21 @@ export const AiAssistantScreen: React.FC<AiAssistantScreenProps> = ({ onNavigate
     setIsLoading(true);
 
     try {
-        const responseText = await aiService.sendMessage(inputText, sensors);
-        const aiMsg: Message = { id: Date.now() + 1, role: 'assistant', text: responseText };
+        const response = await api.askAI(inputText);
+        const aiMsg: Message = { 
+          id: Date.now() + 1, 
+          role: 'assistant', 
+          text: response.text 
+        };
         setMessages(prev => [...prev, aiMsg]);
-    } catch (error) {
-        const errorMsg: Message = { id: Date.now() + 1, role: 'assistant', text: 'Desculpe, tive um problema ao processar sua solicitação. Tente novamente mais tarde.' };
+    } catch (error: any) {
+        const errorMsg: Message = { 
+          id: Date.now() + 1, 
+          role: 'assistant', 
+          text: error.message === 'AI Assistant timed out' 
+            ? 'A assistente demorou muito para responder. Por favor, tente novamente.'
+            : 'Desculpe, tive um problema ao processar sua solicitação. Verifique sua conexão ou tente mais tarde.' 
+        };
         setMessages(prev => [...prev, errorMsg]);
     } finally {
         setIsLoading(false);
@@ -84,13 +71,13 @@ export const AiAssistantScreen: React.FC<AiAssistantScreenProps> = ({ onNavigate
              <div>
                 <h1 className="text-xl font-bold text-slate-900 dark:text-white">Climatic AI</h1>
                 <p className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1">
-                    Powered by Gemini 3.0
+                    Powered by Gemini 1.5 Flash
                 </p>
              </div>
         </div>
 
         {/* Chat Area */}
-        <main className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+        <main className="flex-1 overflow-y-auto px-4 py-4 space-y-4 no-scrollbar">
             {messages.map((msg) => (
                 <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                     <div className={`max-w-[85%] rounded-2xl p-4 text-sm leading-relaxed shadow-sm ${
@@ -98,12 +85,12 @@ export const AiAssistantScreen: React.FC<AiAssistantScreenProps> = ({ onNavigate
                         ? 'bg-primary text-white rounded-tr-none' 
                         : 'bg-white dark:bg-surface-dark text-slate-800 dark:text-slate-200 border border-slate-100 dark:border-slate-700/50 rounded-tl-none'
                     }`}>
-                         {/* Simple Markdown-like rendering for bold text */}
-                        {msg.text.split('\n').map((line, i) => (
-                            <p key={i} className="mb-1 last:mb-0">
-                                {line}
-                            </p>
-                        ))}
+                        <ReactMarkdown 
+                          remarkPlugins={[remarkGfm]}
+                          className="prose dark:prose-invert prose-sm max-w-none prose-p:leading-relaxed prose-p:my-1"
+                        >
+                          {msg.text}
+                        </ReactMarkdown>
                     </div>
                 </div>
             ))}

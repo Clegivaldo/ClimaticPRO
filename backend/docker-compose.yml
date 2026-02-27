@@ -1,24 +1,27 @@
-version: '3.8'
-
 services:
   postgres:
     image: postgres:15-alpine
-    container_name: climatic-pro-db
-    restart: unless-stopped
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: climatic_pro
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-climatic_pro}
     ports:
-      - "5434:5432"
+      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+
+  backend:
+    build: .
+    ports:
+      - "3001:3001"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-climatic_pro}?schema=public
+      PORT: 3001
+      JWT_SECRET: ${JWT_SECRET}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-*}
+    depends_on:
+      - postgres
 
 volumes:
   postgres_data:
-    driver: local

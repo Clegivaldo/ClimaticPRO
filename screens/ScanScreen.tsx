@@ -3,6 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { AppScreen } from '../types';
 import { Header } from '../components/Header';
 import { parseBleData } from '../utils/bleParser';
+import { api } from '../services/api';
 
 interface ScanScreenProps {
   onNavigate: (screen: AppScreen, params?: any) => void;
@@ -11,6 +12,19 @@ interface ScanScreenProps {
 export const ScanScreen: React.FC<ScanScreenProps> = ({ onNavigate }) => {
   const [devices, setDevices] = useState<any[]>([]);
   const [isScanning, setIsScanning] = useState(true);
+  const [registering, setRegistering] = useState<string | null>(null);
+
+  const handleRegister = async (device: any) => {
+    setRegistering(device.mac);
+    try {
+        await api.registerSensor(device.mac, device.type, device.name);
+        onNavigate(AppScreen.DASHBOARD);
+    } catch (err: any) {
+        alert('Erro ao registrar sensor. Verifique se ele já está cadastrado.');
+    } finally {
+        setRegistering(null);
+    }
+  };
 
   // --- Real Web Bluetooth Scan Logic (Browser Limitations Apply) ---
   const requestBluetoothDevice = async () => {
@@ -193,10 +207,11 @@ export const ScanScreen: React.FC<ScanScreenProps> = ({ onNavigate }) => {
                             </div>
                         </div>
                         <button 
-                            onClick={() => onNavigate(AppScreen.DASHBOARD)}
-                            className="bg-primary hover:bg-primary/90 text-white shadow-lg shadow-primary/20 text-sm font-medium px-4 py-2 rounded-lg transition-all active:scale-95 h-10"
+                            onClick={() => handleRegister(device)}
+                            disabled={registering === device.mac}
+                            className="bg-primary hover:bg-primary/90 text-white shadow-lg shadow-primary/20 text-sm font-medium px-4 py-2 rounded-lg transition-all active:scale-95 h-10 flex items-center justify-center min-w-[80px]"
                         >
-                            Add
+                            {registering === device.mac ? <span className="material-icons-round animate-spin text-sm">refresh</span> : 'Add'}
                         </button>
                     </div>
                     {/* Debug Raw Data */}

@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { AppScreen, SensorData } from '../types';
 import { Header } from '../components/Header';
+import { api } from '../services/api';
 
 interface ExportScreenProps {
   sensor: SensorData;
@@ -51,51 +52,49 @@ export const ExportScreen: React.FC<ExportScreenProps> = ({ sensor, onNavigate }
     localStorage.setItem(`recipients_${sensor.mac}`, JSON.stringify(updated));
   };
 
-  const handleGenerateExport = () => {
+  const handleGenerateExport = async () => {
       setIsExporting(true);
-      setTimeout(() => {
+      try {
           const start = new Date(startDate);
+          start.setHours(0, 0, 0, 0);
           const end = new Date(endDate);
+          end.setHours(23, 59, 59, 999);
           
+          const params = ['temperature', 'humidity']; // Standard for most sensors
+          if (sensor.deviceType.includes('35F5')) params.push('co2', 'pm25', 'tvoc');
+          
+          const exportData = {
+              sensorId: sensor.id,
+              startDate: start.toISOString(),
+              endDate: end.toISOString(),
+              parameters: params
+          };
+
+          let blob: Blob;
+          let filename: string;
+
           if (format === 'csv') {
-              const headers = ['Data', 'Hora', 'Temperatura(C)', 'Umidade(%)'];
-              const rows = [];
-              let currentDate = new Date(start);
-              while (currentDate <= end) {
-                  const temp = (22 + Math.random() * 4 - 2).toFixed(1);
-                  const hum = (50 + Math.random() * 10 - 5).toFixed(0);
-                  const dateStr = currentDate.toISOString().split('T')[0];
-                  const timeStr = currentDate.toTimeString().split(' ')[0];
-                  rows.push([dateStr, timeStr, temp, hum]);
-                  currentDate.setHours(currentDate.getHours() + 1);
-              }
-              const csvContent = [headers.join(','), ...rows.map(row => row.join(','))].join('\n');
-              const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-              const url = URL.createObjectURL(blob);
-              const link = document.createElement('a');
-              link.setAttribute('href', url);
-              link.setAttribute('download', `${sensor.alias || 'sensor'}_${startDate}_${endDate}.csv`);
-              document.body.appendChild(link);
-              link.click();
-              document.body.removeChild(link);
+              blob = await api.exportCSV(exportData);
+              filename = `${sensor.alias || 'sensor'}_${startDate}_${endDate}.csv`;
           } else {
-              let reportContent = `RELATÓRIO CLIMATIC PRO\n`;
-              reportContent += `----------------------\n`;
-              reportContent += `Sensor: ${sensor.alias || sensor.mac}\n`;
-              reportContent += `Período: ${startDate} até ${endDate}\n`;
-              reportContent += `Gerado em: ${new Date().toLocaleString()}\n\n`;
-              reportContent += `[Fim do Relatório]`;
-              const blob = new Blob([reportContent], { type: 'text/plain;charset=utf-8;' });
-              const url = URL.createObjectURL(blob);
-              const link = document.createElement('a');
-              link.setAttribute('href', url);
-              link.setAttribute('download', `${sensor.alias || 'sensor'}_report.txt`);
-              document.body.appendChild(link);
-              link.click();
-              document.body.removeChild(link);
+              blob = await api.exportPDF(exportData);
+              filename = `${sensor.alias || 'sensor'}_${startDate}_${endDate}.pdf`;
           }
+
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = filename;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          URL.revokeObjectURL(url);
+      } catch (error: any) {
+          console.error('Export failed:', error);
+          alert('Falha ao gerar exportação. Verifique a conexão com o servidor.');
+      } finally {
           setIsExporting(false);
-      }, 1500);
+      }
   };
 
   const handleScheduleAutoExport = () => {
