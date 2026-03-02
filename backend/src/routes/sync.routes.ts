@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import * as syncService from '../services/sync.service';
+import * as jaaleeService from '../services/jaalee.service';
 import { authenticateToken } from '../middleware/auth.middleware';
 import { z } from 'zod';
 
@@ -54,4 +55,20 @@ router.post('/batch', async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * POST /api/v1/sync/jaalee/fetch
+ * Trigger manual sync from JAALEE Open API and import readings for known sensors
+ */
+router.post('/jaalee/fetch', async (req: Request, res: Response) => {
+  try {
+    const items = await jaaleeService.fetchAllDevices();
+    const imported = await jaaleeService.importJaaleeToDb(items);
+    return res.json({ code: 200, message: 'Imported', data: { count: imported.length } });
+  } catch (error: any) {
+    console.error('Error fetching Jaalee data:', error);
+    return res.status(500).json({ code: 500, message: 'Failed to fetch Jaalee data', error: error.message });
+  }
+});
+
 export default router;
+

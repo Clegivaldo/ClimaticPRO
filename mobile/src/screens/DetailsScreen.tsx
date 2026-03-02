@@ -60,7 +60,7 @@ export const DetailsScreen = ({ route, navigation }: any) => {
         </TouchableOpacity>
         <Text style={styles.headerTitle}>{sensor.alias || sensor.mac}</Text>
         <TouchableOpacity style={styles.settingsButton}>
-          <Settings size={22} color="#64748b" />
+          <IconFallback name="Settings" size={22} color="#64748b" />
         </TouchableOpacity>
       </View>
 
@@ -77,13 +77,13 @@ export const DetailsScreen = ({ route, navigation }: any) => {
           
           <View style={styles.heroRow}>
             <View style={styles.heroItem}>
-              <Droplets size={18} color="#3b82f6" />
+              <IconFallback name="Droplets" size={18} color="#3b82f6" />
               <Text style={styles.heroItemValue}>{latestReading?.humidity?.toFixed(0) || '--'}%</Text>
               <Text style={styles.heroItemLabel}>Umidade</Text>
             </View>
             <View style={styles.divider} />
             <View style={styles.heroItem}>
-              <Zap size={18} color="#10b981" />
+              <IconFallback name="Zap" size={18} color="#10b981" />
               <Text style={styles.heroItemValue}>{sensor.batteryLevel || '--'}%</Text>
               <Text style={styles.heroItemLabel}>Bateria</Text>
             </View>
