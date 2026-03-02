@@ -117,8 +117,8 @@ export const DetailsScreen: React.FC<DetailsScreenProps> = ({ sensor, onNavigate
 
   return (
     <div className="flex flex-col h-full bg-background-light dark:bg-background-dark overflow-hidden">
-      <Header 
-        title={sensor.alias || sensor.mac} 
+            <Header 
+                title={sensor.alias || sensor.mac || sensor.signature || 'Sensor'} 
         onBack={() => onNavigate(AppScreen.DASHBOARD)} 
         rightAction={
             <button 
@@ -171,7 +171,7 @@ export const DetailsScreen: React.FC<DetailsScreenProps> = ({ sensor, onNavigate
                 </div>
             </div>
             <p className="mt-6 text-[10px] uppercase font-bold tracking-widest text-slate-400 dark:text-slate-500 text-center">
-                ID: {sensor.mac.slice(-5)} • Bateria: {sensor.batteryLevel || '--'}%
+                ID: {sensor.mac ? sensor.mac.slice(-5) : (sensor.signature ? sensor.signature.slice(-5) : '--')} • Bateria: {sensor.batteryLevel ?? '--'}%
             </p>
         </section>
 

@@ -78,6 +78,14 @@ class ApiService {
     return newSensor;
   }
 
+  async registerSensorBySignature(signature: string, deviceType: string, alias?: string) {
+    const response = await apiClient.post('/sensors', { signature, deviceType, alias });
+    const newSensor = response.data.data;
+    const currentSensors = useSensorStore.getState().sensors;
+    useSensorStore.getState().setSensors([...currentSensors, newSensor]);
+    return newSensor;
+  }
+
   async deleteSensor(sensorId: string) {
     const response = await apiClient.delete(`/sensors/${sensorId}`);
     return response.data;

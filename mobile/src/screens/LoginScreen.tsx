@@ -26,7 +26,17 @@ export const LoginScreen = ({ navigation }: any) => {
       await api.getVerificationCode(cleanAccount);
       setStep('code');
     } catch (err: any) {
-      Alert.alert('Erro', err.response?.data?.message || 'Falha ao enviar código.');
+      // Build a helpful error message for debugging on device
+      let msg = 'Falha ao enviar código.';
+      try {
+        if (err?.response?.data?.message) msg = err.response.data.message;
+        else if (err?.response?.data) msg = JSON.stringify(err.response.data);
+        else if (err?.message) msg = err.message;
+      } catch (e) {}
+      // Log full error to Metro console as well
+      // eslint-disable-next-line no-console
+      console.log('[LoginScreen] send-code error:', err);
+      Alert.alert('Erro', msg);
     } finally {
       setLoading(false);
     }
@@ -45,7 +55,14 @@ export const LoginScreen = ({ navigation }: any) => {
         // Zustand já atualiza e o App.tsx vai navegar para o Dashboard
       }
     } catch (err: any) {
-      Alert.alert('Erro', 'Código inválido ou expirado.');
+      let msg = 'Código inválido ou expirado.';
+      try {
+        if (err?.response?.data?.message) msg = err.response.data.message;
+        else if (err?.message) msg = err.message;
+      } catch (e) {}
+      // eslint-disable-next-line no-console
+      console.log('[LoginScreen] verify-code error:', err);
+      Alert.alert('Erro', msg);
     } finally {
       setLoading(false);
     }

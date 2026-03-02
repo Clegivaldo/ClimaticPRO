@@ -10,11 +10,21 @@ const router = Router();
 router.use('/:id/data', sensorDataRoutes);
 
 // Validation schemas
-const createSensorSchema = z.object({
-  mac: z.string().regex(/^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$/, 'Invalid MAC address'),
-  alias: z.string().min(1).max(50).optional(),
-  deviceType: z.enum(['F525_GATEWAY', 'JHT_UP_39F5', 'WIFI_PT100_35F5', 'JW_U_WATER']),
-});
+const deviceTypeEnum = z.enum(['F525_GATEWAY', 'JHT_UP_39F5', 'WIFI_PT100_35F5', 'JW_U_WATER']);
+
+// Allow creation by either a conventional MAC or by a raw advertisement signature
+const createSensorSchema = z.union([
+  z.object({
+    mac: z.string().regex(/^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$/, 'Invalid MAC address'),
+    alias: z.string().min(1).max(50).optional(),
+    deviceType: deviceTypeEnum,
+  }),
+  z.object({
+    signature: z.string().min(6).max(512),
+    alias: z.string().min(1).max(50).optional(),
+    deviceType: deviceTypeEnum,
+  })
+]);
 
 const updateSensorSchema = z.object({
   alias: z.string().min(1).max(50).optional(),
@@ -102,9 +112,13 @@ router.post('/', async (req: Request, res: Response) => {
       });
     }
     
+    const payload = validation.data as any;
     const sensor = await sensorService.createSensor({
-      ...validation.data,
-      userId
+      userId,
+      mac: payload.mac,
+      signature: payload.signature,
+      alias: payload.alias,
+      deviceType: payload.deviceType,
     });
     
     return res.status(201).json({

@@ -40,7 +40,8 @@ model VerificationCode {
 model Sensor {
   id           String     @id @default(uuid())
   userId       String
-  mac          String
+  mac          String?
+  signature    String?   
   alias        String?
   deviceType   DeviceType
   isActive     Boolean    @default(true)
@@ -55,8 +56,10 @@ model Sensor {
   alerts      Alert[]
 
   @@unique([userId, mac])
+  @@unique([userId, signature])
   @@index([userId])
   @@index([mac])
+  @@index([signature])
   @@index([lastSeenAt])
 }
 

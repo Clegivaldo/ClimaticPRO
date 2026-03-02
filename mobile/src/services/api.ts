@@ -38,6 +38,18 @@ class ApiService {
     return response.data;
   }
 
+  async registerSensor(mac?: string, deviceType?: string, alias?: string, signature?: string) {
+    const body: any = { deviceType };
+    if (mac) body.mac = mac;
+    if (signature) body.signature = signature;
+    if (alias) body.alias = alias;
+    const response = await apiClient.post('/sensors', body);
+    const newSensor = response.data.data;
+    const currentSensors = useSensorStore.getState().sensors;
+    useSensorStore.getState().setSensors([...currentSensors, newSensor]);
+    return newSensor;
+  }
+
   async askAI(message: string) {
     const response = await apiClient.post('/ai/chat', { message });
     return response.data.data;

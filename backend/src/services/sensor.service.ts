@@ -9,7 +9,8 @@ import { DeviceType } from '@prisma/client';
 
 export interface CreateSensorData {
   userId: string;
-  mac: string;
+  mac?: string;
+  signature?: string;
   alias?: string;
   deviceType: DeviceType;
 }
@@ -31,7 +32,8 @@ export async function createSensor(data: CreateSensorData) {
   return prisma.sensor.create({
     data: {
       userId: data.userId,
-      mac: data.mac,
+      mac: data.mac || null,
+      signature: data.signature || null,
       alias: data.alias,
       deviceType: data.deviceType,
       // Initialize with default alert configuration
