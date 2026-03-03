@@ -33,6 +33,13 @@ class ApiService {
     return reading;
   }
 
+  async getSensorHistory(sensorId: string, startDate?: string, endDate?: string, page = 1, limit = 100) {
+    const response = await apiClient.get(`/sensors/${sensorId}/data`, {
+      params: { startDate, endDate, page, limit }
+    });
+    return response.data.data;
+  }
+
   async postSensorReading(sensorId: string, payload: any) {
     const response = await apiClient.post(`/sensors/${sensorId}/data`, payload);
     return response.data;
@@ -48,6 +55,13 @@ class ApiService {
     const currentSensors = useSensorStore.getState().sensors;
     useSensorStore.getState().setSensors([...currentSensors, newSensor]);
     return newSensor;
+  }
+
+  async deleteSensor(sensorId: string) {
+    const response = await apiClient.delete(`/sensors/${sensorId}`);
+    const currentSensors = useSensorStore.getState().sensors;
+    useSensorStore.getState().setSensors(currentSensors.filter((s: any) => s.id !== sensorId));
+    return response.data;
   }
 
   async askAI(message: string) {

@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api } from './api';
+import { useAuthStore } from '../store/useAuthStore';
 
 const QUEUE_KEY = 'sensor_reading_queue_v1';
 
@@ -19,6 +20,9 @@ export async function flushQueue() {
     const raw = await AsyncStorage.getItem(QUEUE_KEY);
     const arr = raw ? JSON.parse(raw) : [];
     if (!arr.length) return;
+
+    // Only flush if authenticated
+    if (!useAuthStore.getState().isAuthenticated) return;
 
     const remaining: any[] = [];
     for (const item of arr) {

@@ -40,10 +40,13 @@
       "favicon": "./assets/favicon.png"
     },
     "extra": {
-      "EXPO_PUBLIC_API_URL": "http://10.11.12.197:3001/api/v1",
+      "EXPO_PUBLIC_API_URL": "http://10.11.12.34:3001/api/v1",
       "eas": {
         "projectId": "a9b7ad2f-52ed-4d31-864f-7cbab0ba7e88"
       }
-    }
+    },
+    "plugins": [
+      "expo-sharing"
+    ]
   }
 }

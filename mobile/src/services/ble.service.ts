@@ -4,6 +4,7 @@ import { parseAdvertising } from '../utils/bleParser';
 import { enqueueReading, startQueueWorker } from './offlineQueue';
 import { api } from './api';
 import { useSensorStore } from '../store/useSensorStore';
+import { useAuthStore } from '../store/useAuthStore';
 
 type DeviceCallback = (device: any) => void;
 
@@ -11,8 +12,133 @@ class BleService {
   private scanning = false;
   private stopFn: (() => void) | null = null;
   private recentAds: any[] = [];
+  private diagnostics: any[] = [];
   private backend: string = 'unknown';
   private lastState: string | null = null;
+  private lastPostTimes: Map<string, number> = new Map();
+
+  private pushDiagnostic(kind: string, data: any = {}) {
+    try {
+      this.diagnostics.unshift({ ts: Date.now(), kind, ...data });
+      if (this.diagnostics.length > 300) this.diagnostics.pop();
+    } catch (e) { }
+  }
+
+  private hasMeasurement(parsed: any) {
+    return ['temperature', 'humidity', 'co2', 'pm25', 'tvoc', 'pressure', 'waterLevel']
+      .some(k => typeof parsed?.[k] === 'number');
+  }
+
+  private buildReadingPayload(parsed: any) {
+    const payload: any = {
+      timestamp: new Date().toISOString(),
+      rssi: parsed?.rssi,
+      raw: parsed?.raw,
+      rawHex: parsed?.rawHex,
+    };
+
+    if (typeof parsed?.temperature === 'number') payload.temperature = parsed.temperature;
+    if (typeof parsed?.humidity === 'number') payload.humidity = parsed.humidity;
+    if (typeof parsed?.co2 === 'number') payload.co2 = parsed.co2;
+    if (typeof parsed?.pm25 === 'number') payload.pm25 = parsed.pm25;
+    if (typeof parsed?.tvoc === 'number') payload.tvoc = parsed.tvoc;
+    if (typeof parsed?.pressure === 'number') payload.pressure = parsed.pressure;
+    if (typeof parsed?.waterLevel === 'number') payload.waterLevel = parsed.waterLevel;
+
+    return payload;
+  }
+
+  private setLocalReading(sensorId: string, payload: any) {
+    if (!this.hasMeasurement(payload)) return;
+    try {
+      useSensorStore.getState().setReading(sensorId, {
+        id: `live-${sensorId}-${Date.now()}`,
+        sensorId,
+        temperature: payload.temperature,
+        humidity: payload.humidity,
+        co2: payload.co2,
+        timestamp: payload.timestamp || new Date().toISOString(),
+      } as any);
+    } catch (e) { }
+  }
+
+  private async forwardParsedReading(parsed: any) {
+    // Only forward readings if the user is authenticated
+    if (!useAuthStore.getState().isAuthenticated) return;
+    try {
+      const found = this.findMatchingSensor(parsed);
+      if (!found) {
+        this.pushDiagnostic('no-match', {
+          parsedId: parsed?.id,
+          parsedMac: parsed?.mac,
+          parsedRealMac: parsed?.realMac,
+          name: parsed?.name,
+          type: parsed?.type,
+          hasTemp: typeof parsed?.temperature === 'number',
+          hasHum: typeof parsed?.humidity === 'number',
+        });
+        return;
+      }
+
+      const payload = this.buildReadingPayload(parsed);
+      this.setLocalReading(found.id, payload);
+
+      this.pushDiagnostic('match-found', {
+        sensorId: found.id,
+        sensorMac: found.mac,
+        parsedId: parsed?.id,
+        parsedMac: parsed?.mac,
+        parsedRealMac: parsed?.realMac,
+        type: parsed?.type,
+        temperature: payload?.temperature,
+        humidity: payload?.humidity,
+      });
+
+      if (!this.hasMeasurement(payload)) {
+        this.pushDiagnostic('no-measurement', {
+          sensorId: found.id,
+          parsedId: parsed?.id,
+          parsedMac: parsed?.mac,
+          parsedRealMac: parsed?.realMac,
+          type: parsed?.type,
+        });
+        return;
+      }
+
+      const sensorId = found.id;
+      const now = Date.now();
+      const lastPost = this.lastPostTimes.get(sensorId) || 0;
+      const THROTTLE_MS = 60000; // Only post once per minute
+
+      if (now - lastPost < THROTTLE_MS) {
+        this.pushDiagnostic('throttled', {
+          sensorId,
+          remaining: THROTTLE_MS - (now - lastPost)
+        });
+        return;
+      }
+
+      try {
+        await api.postSensorReading(sensorId, payload);
+        this.lastPostTimes.set(sensorId, now);
+        this.pushDiagnostic('posted', {
+          sensorId: found.id,
+          temperature: payload?.temperature,
+          humidity: payload?.humidity,
+          timestamp: payload?.timestamp,
+        });
+      } catch (err) {
+        await enqueueReading({ sensorId: found.id, payload });
+        this.pushDiagnostic('queued', {
+          sensorId: found.id,
+          temperature: payload?.temperature,
+          humidity: payload?.humidity,
+          timestamp: payload?.timestamp,
+          error: String((err as any)?.message || err || 'unknown'),
+        });
+      }
+    } catch (e) { }
+  }
 
   async startScan(onDevice: DeviceCallback) {
     // Ensure location permission on Android (required for BLE scanning)
@@ -46,7 +172,7 @@ class BleService {
               toRequest.push('android.permission.BLUETOOTH_SCAN');
               toRequest.push('android.permission.BLUETOOTH_CONNECT');
             }
-          } catch (e) {}
+          } catch (e) { }
 
           const results = await PermissionsAndroid.requestMultiple(toRequest as any);
           const denied = Object.values(results).some(v => v !== PermissionsAndroid.RESULTS.GRANTED);
@@ -61,7 +187,7 @@ class BleService {
 
     this.scanning = true;
 
-    // Try dynamic import of a native BLE library. If not available, fall back to simulation.
+    // Try dynamic import of a native BLE library. No simulation fallback is allowed.
     try {
       // Prefer react-native-ble-plx when available
       // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -85,23 +211,23 @@ class BleService {
               if (error) return;
               try {
                 console.log('[BleService] raw advert (onStateChange):', { id: device?.id, name: device?.name || device?.localName, rssi: device?.rssi, manufacturerData: device?.manufacturerData, serviceData: device?.serviceData, serviceUUIDs: device?.serviceUUIDs });
-              } catch (e) {}
+              } catch (e) { }
               const parsed = parseAdvertising(device);
               if (parsed) {
-                  try { this.recentAds.unshift({ ts: Date.now(), parsed }); if (this.recentAds.length > 100) this.recentAds.pop(); } catch (e) {}
-                  onDevice(parsed);
-                  try {
-                    const found = this.findMatchingSensor(parsed);
-                    if (found) {
-                      const payload = { timestamp: new Date().toISOString(), rssi: parsed.rssi, raw: parsed.raw };
-                      try {
-                        await api.postSensorReading(found.id, payload);
-                      } catch (err) {
-                        await enqueueReading({ sensorId: found.id, payload });
-                      }
-                    }
-                  } catch (e) {}
-                }
+                try { this.recentAds.unshift({ ts: Date.now(), parsed }); if (this.recentAds.length > 100) this.recentAds.pop(); } catch (e) { }
+                this.pushDiagnostic('parsed', {
+                  id: parsed?.id,
+                  mac: parsed?.mac,
+                  realMac: parsed?.realMac,
+                  name: parsed?.name,
+                  type: parsed?.type,
+                  temperature: parsed?.temperature,
+                  humidity: parsed?.humidity,
+                  rssi: parsed?.rssi,
+                });
+                onDevice(parsed);
+                await this.forwardParsedReading(parsed);
+              }
             });
           }
         }, true);
@@ -110,7 +236,7 @@ class BleService {
         // increase timeout to allow slower devices to report state changes
         await new Promise((resolve, _reject) => setTimeout(resolve, 3000));
         if (!resolved) {
-          try { sub.remove(); } catch (e) {}
+          try { sub.remove(); } catch (e) { }
           throw new Error('BluetoothDisabled');
         }
       } else {
@@ -118,30 +244,30 @@ class BleService {
           if (error) return;
           try {
             console.log('[BleService] raw advert:', { id: device?.id, name: device?.name || device?.localName, rssi: device?.rssi, manufacturerData: device?.manufacturerData, serviceData: device?.serviceData, serviceUUIDs: device?.serviceUUIDs });
-          } catch (e) {}
+          } catch (e) { }
           const parsed = parseAdvertising(device);
           if (parsed) {
-            try { this.recentAds.unshift({ ts: Date.now(), parsed }); if (this.recentAds.length > 100) this.recentAds.pop(); } catch (e) {}
+            try { this.recentAds.unshift({ ts: Date.now(), parsed }); if (this.recentAds.length > 100) this.recentAds.pop(); } catch (e) { }
+            this.pushDiagnostic('parsed', {
+              id: parsed?.id,
+              mac: parsed?.mac,
+              realMac: parsed?.realMac,
+              name: parsed?.name,
+              type: parsed?.type,
+              temperature: parsed?.temperature,
+              humidity: parsed?.humidity,
+              rssi: parsed?.rssi,
+            });
             console.log('[BleService] device discovered:', parsed.mac || parsed.id, parsed.name || '');
             onDevice(parsed);
-            try {
-              const found = this.findMatchingSensor(parsed);
-              if (found) {
-                const payload = { timestamp: new Date().toISOString(), rssi: parsed.rssi, raw: parsed.raw };
-                try {
-                  await api.postSensorReading(found.id, payload);
-                } catch (err) {
-                  await enqueueReading({ sensorId: found.id, payload });
-                }
-              }
-            } catch (e) {}
+            await this.forwardParsedReading(parsed);
           }
         });
       }
 
       this.stopFn = async () => {
-        try { await manager.stopDeviceScan(); } catch (e) {}
-        try { if (sub) sub.remove(); } catch (e) {}
+        try { await manager.stopDeviceScan(); } catch (e) { }
+        try { if (sub) sub.remove(); } catch (e) { }
         this.scanning = false;
       };
       return;
@@ -157,26 +283,26 @@ class BleService {
       const listener = addListener('onScanResult', async (result: any) => {
         const parsed = parseAdvertising(result);
         if (parsed) {
-          try { this.recentAds.unshift({ ts: Date.now(), parsed }); if (this.recentAds.length > 100) this.recentAds.pop(); } catch (e) {}
+          try { this.recentAds.unshift({ ts: Date.now(), parsed }); if (this.recentAds.length > 100) this.recentAds.pop(); } catch (e) { }
+          this.pushDiagnostic('parsed', {
+            id: parsed?.id,
+            mac: parsed?.mac,
+            realMac: parsed?.realMac,
+            name: parsed?.name,
+            type: parsed?.type,
+            temperature: parsed?.temperature,
+            humidity: parsed?.humidity,
+            rssi: parsed?.rssi,
+          });
           onDevice(parsed);
-          try {
-            const found = this.findMatchingSensor(parsed);
-            if (found) {
-              const payload = { timestamp: new Date().toISOString(), rssi: parsed.rssi, raw: parsed.raw };
-              try {
-                await api.postSensorReading(found.id, payload);
-              } catch (err) {
-                await enqueueReading({ sensorId: found.id, payload });
-              }
-            }
-          } catch (e) {}
+          await this.forwardParsedReading(parsed);
         }
       });
       startDeviceScan();
 
       this.stopFn = () => {
-        try { stopDeviceScan(); } catch (e) {}
-        try { listener.remove(); } catch (e) {}
+        try { stopDeviceScan(); } catch (e) { }
+        try { listener.remove(); } catch (e) { }
         this.scanning = false;
       };
       return;
@@ -184,41 +310,18 @@ class BleService {
       // expo-ble-scanner not available
     }
 
-    // Fallback: simulated discovery (keeps app runnable in Expo without native BLE)
-    const mockedDevices = [
-      { id: '1', name: 'JHT-F525 Gateway', mac: 'C1:32:71:39:72:95', type: 'F525_GATEWAY', rssi: -65 },
-      { id: '2', name: 'Wifi-PT100 Sensor', mac: '00:E8:31:CD:80:79', type: 'WIFI_PT100_35F5', rssi: -72 },
-    ];
-
-    const timer = setTimeout(async () => {
-      for (const d of mockedDevices) {
-        try { this.recentAds.unshift({ ts: Date.now(), parsed: d }); if (this.recentAds.length > 100) this.recentAds.pop(); } catch (e) {}
-        onDevice(d);
-        try {
-          const found = this.findMatchingSensor(d);
-          if (found) {
-            const payload = { timestamp: new Date().toISOString(), rssi: d.rssi, raw: d };
-            try {
-              await api.postSensorReading(found.id, payload);
-            } catch (err) {
-              await enqueueReading({ sensorId: found.id, payload });
-            }
-          }
-        } catch (e) {}
-      }
-      this.scanning = false;
-    }, 1500);
-
-    this.stopFn = () => {
-      clearTimeout(timer);
-      this.scanning = false;
-    };
-    this.backend = 'simulation';
+    this.scanning = false;
+    this.backend = 'none';
+    throw new Error('Real BLE backend unavailable (react-native-ble-plx/expo-ble-scanner not loaded)');
   }
 
   getRecentAds() { return [...this.recentAds]; }
 
+  getDiagnostics() { return [...this.diagnostics]; }
+
   clearRecentAds() { this.recentAds = []; }
+
+  clearDiagnostics() { this.diagnostics = []; }
 
   /**
    * Try to find a matching sensor from the store using tolerant heuristics.
@@ -230,25 +333,32 @@ class BleService {
       if (!sensors || sensors.length === 0) return null;
       const norm = (s: string) => (s || '').replace(/[^0-9A-Fa-f]/g, '').toLowerCase();
       for (const s of sensors) {
-        if (!s || !s.mac) continue;
+        if (!s) continue;
         const sensorMac = (s.mac || '').toLowerCase();
-        const sensorSig = (s.signature || '').toLowerCase();
-        if (parsed.mac && parsed.mac.toLowerCase() === sensorMac) return s;
-        if (sensorSig && parsed.rawHex && parsed.rawHex.replace(/[^0-9A-Fa-f]/g, '').toLowerCase().includes(sensorSig.replace(/[^0-9A-Fa-f]/g, '').toLowerCase())) return s;
+        const sensorSig = (((s as any).signature) || '').toLowerCase();
+        const parsedMac = (parsed.realMac || parsed.mac || '').toLowerCase();
+        const parsedSig = (parsed.advSignature || '').toLowerCase();
+
+        if (sensorSig) {
+          if (parsedSig && (parsedSig === sensorSig || parsedSig.includes(sensorSig) || sensorSig.includes(parsedSig))) return s;
+          if (parsed.rawHex && parsed.rawHex.replace(/[^0-9A-Fa-f]/g, '').toLowerCase().includes(sensorSig.replace(/[^0-9A-Fa-f]/g, '').toLowerCase())) return s;
+        }
+
+        if (sensorMac && parsedMac && norm(sensorMac) === norm(parsedMac)) return s;
         // compare normalized forms inside rawHex if available
-        if (parsed.rawHex) {
+        if (sensorMac && parsed.rawHex) {
           const rawNorm = (parsed.rawHex || '').replace(/[^0-9A-Fa-f]/g, '').toLowerCase();
           if (rawNorm && norm(s.mac) && rawNorm.includes(norm(s.mac))) return s;
         }
         // some backends put the mac inside id without colons
-        if (parsed.id && parsed.id.replace(/:/g, '').toLowerCase().includes(sensorMac.replace(/:/g, ''))) return s;
+        if (sensorMac && parsed.id && parsed.id.replace(/:/g, '').toLowerCase().includes(sensorMac.replace(/:/g, ''))) return s;
         // fallback: check if stored mac (no colons) is contained in stringified raw manufacturerData
         try {
           const m = String(parsed.raw?.manufacturerData || parsed.raw?.serviceData || '').replace(/[^0-9A-Fa-f]/g, '').toLowerCase();
-          if (m && norm(s.mac) && m.includes(norm(s.mac))) return s;
-        } catch (e) {}
+          if (sensorMac && m && norm(s.mac) && m.includes(norm(s.mac))) return s;
+        } catch (e) { }
       }
-    } catch (e) {}
+    } catch (e) { }
     return null;
   }
 
@@ -264,8 +374,7 @@ class BleService {
       this.lastState = stateNow;
       return stateNow === 'PoweredOn';
     } catch (e) {
-      // If native lib not present, assume true (expo simulation)
-      return true;
+      return false;
     }
   }
 
@@ -283,7 +392,7 @@ class BleService {
           const action = IntentLauncher.ACTION_BLUETOOTH_SETTINGS || 'android.bluetooth.adapter.action.REQUEST_ENABLE';
           await IntentLauncher.startActivityAsync(action);
         } catch (e) {
-          try { await IntentLauncher.startActivityAsync('android.settings.BLUETOOTH_SETTINGS'); } catch (e) {}
+          try { await IntentLauncher.startActivityAsync('android.settings.BLUETOOTH_SETTINGS'); } catch (e) { }
         }
         // give system a moment
         await new Promise(r => setTimeout(r, 1000));
@@ -304,7 +413,7 @@ class BleService {
         this.lastState = on ? 'PoweredOn' : this.lastState;
         return on;
       }
-    } catch (e) {}
+    } catch (e) { }
 
     // Try to open Bluetooth settings via Linking intent URL (fallback)
     try {
@@ -313,11 +422,11 @@ class BleService {
       try {
         await Linking.openURL('android.settings.BLUETOOTH_SETTINGS');
       } catch (e) {
-        try { await Linking.openURL('intent:#Intent;action=android.settings.BLUETOOTH_SETTINGS;end'); } catch (e) {}
+        try { await Linking.openURL('intent:#Intent;action=android.settings.BLUETOOTH_SETTINGS;end'); } catch (e) { }
       }
       await new Promise(r => setTimeout(r, 1000));
       return await this.isBluetoothOn();
-    } catch (e) {}
+    } catch (e) { }
 
     return false;
   }
@@ -351,9 +460,11 @@ class BleService {
         targetMac = deviceOrId;
       } else if (deviceOrId && typeof deviceOrId === 'object') {
         targetId = deviceOrId.id || null;
-        targetMac = deviceOrId.mac || null;
+        targetMac = deviceOrId.realMac || deviceOrId.mac || null;
         targetRawHex = deviceOrId.rawHex || deviceOrId.parsed?.rawHex || null;
       }
+
+      this.pushDiagnostic('connect-start', { targetId, targetMac, hasRaw: !!targetRawHex });
 
       // Try direct connect by id first when available
       let device = null;
@@ -379,39 +490,42 @@ class BleService {
 
       // If direct connect failed, attempt to discover the live advertising device by matching rawHex / mac
       if (!device) {
+        this.pushDiagnostic('connect-fallback-scan', { targetMac });
         const foundDevices: any[] = [];
         const scanPromise = new Promise<void>((resolve) => {
-          manager.startDeviceScan(null, { allowDuplicates: true }, (error: any, d: any) => {
+          manager.startDeviceScan(null, { allowDuplicates: true, scanMode: 2 }, (error: any, d: any) => {
             if (error) return;
             if (!d) return;
-            // parse advert and check rawHex or mac match
             try {
               const parsed = parseAdvertising(d);
               if (parsed) {
-                // normalize compare
                 const norm = (s: string | null) => (s || '').replace(/[^0-9A-Fa-f]/g, '').toLowerCase();
-                if (targetRawHex && parsed.rawHex && norm(parsed.rawHex).includes(norm(targetRawHex))) {
-                  foundDevices.push(d);
-                  resolve();
-                } else if (targetMac && parsed.mac && parsed.mac.replace(/:/g, '').toLowerCase() === targetMac.replace(/:/g, '').toLowerCase()) {
+                const targetMacNorm = norm(targetMac);
+                const parsedMacNorm = norm(parsed.realMac || parsed.mac);
+
+                let match = false;
+                if (targetMacNorm && parsedMacNorm && targetMacNorm === parsedMacNorm) match = true;
+                else if (targetRawHex && parsed.rawHex && norm(parsed.rawHex).includes(norm(targetRawHex))) match = true;
+                else if (targetId && d.id && d.id.toLowerCase() === String(targetId).toLowerCase()) match = true;
+
+                if (match) {
                   foundDevices.push(d);
                   resolve();
                 }
               }
-            } catch (e) {}
-            // also allow id match
-            try {
-              if (targetId && d.id && d.id.toLowerCase() === String(targetId).toLowerCase()) { foundDevices.push(d); resolve(); }
-            } catch (e) {}
+            } catch (e) { }
           });
-          // timeout after short window
-          setTimeout(() => resolve(), 2000);
+          setTimeout(() => resolve(), 3000); // 3 seconds scan for rotating addresses
         });
         await scanPromise;
-        try { await manager.stopDeviceScan(); } catch (e) {}
+        try { await manager.stopDeviceScan(); } catch (e) { }
         if (foundDevices.length > 0) {
           const d = foundDevices[0];
-          try { device = await manager.connectToDevice(d.id, { requestMTU: 256, autoConnect: false }); } catch (e) { device = null; }
+          this.pushDiagnostic('connect-found-live', { id: d.id, rssi: d.rssi });
+          try { device = await manager.connectToDevice(d.id, { requestMTU: 256, autoConnect: false }); } catch (e) {
+            this.pushDiagnostic('connect-live-err', { error: String(e) });
+            device = null;
+          }
         }
       }
 
@@ -424,7 +538,7 @@ class BleService {
         try {
           const characteristics = await s.characteristics();
           full.services.push({ uuid: s.uuid, characteristics: characteristics.map((c: any) => ({ uuid: c.uuid, isReadable: c.isReadable, isWritableWithResponse: c.isWritableWithResponse })) });
-        } catch (e) {}
+        } catch (e) { }
       }
 
       return { device: full, raw: device };
@@ -437,7 +551,7 @@ class BleService {
     try {
       const BleManager = require('react-native-ble-plx').BleManager;
       const manager = new BleManager();
-      try { await manager.cancelDeviceConnection(deviceId); } catch (e) {}
+      try { await manager.cancelDeviceConnection(deviceId); } catch (e) { }
     } catch (e) {
       // ignore when native not available
     }
@@ -446,4 +560,4 @@ class BleService {
 
 export const bleService = new BleService();
 // Start offline queue worker
-try { startQueueWorker(); } catch (e) {}
+try { startQueueWorker(); } catch (e) { }

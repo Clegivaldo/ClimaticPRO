@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, FlatList, StyleSheet, TouchableOpacity, ActivityIndicator, RefreshControl } from 'react-native';
+import { View, Text, FlatList, StyleSheet, TouchableOpacity, ActivityIndicator, RefreshControl, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { api } from '../services/api';
 import { useAuthStore } from '../store/useAuthStore';
@@ -9,13 +9,20 @@ export const DashboardScreen = ({ navigation }: any) => {
   const { sensors, currentReadings } = useSensorStore();
   const [loading, setLoading] = useState(sensors.length === 0);
   const [refreshing, setRefreshing] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const logout = useAuthStore(state => state.logout);
+
+  const fetchLatestForSensors = async (sensorList: any[]) => {
+    if (!Array.isArray(sensorList) || sensorList.length === 0) return;
+    await Promise.all(sensorList.map((sensor: any) =>
+      api.getLatestReading(sensor.id).catch(() => null)
+    ));
+  };
 
   const fetchSensors = async () => {
     try {
-      await api.getAllDeviceData();
-      // Fetch latest readings for each sensor
-      // For performance, in a real app we'd have an endpoint for all latest readings
+      const sensorList = await api.getAllDeviceData();
+      await fetchLatestForSensors(sensorList || []);
     } catch (err) {
       console.error('Error fetching sensors', err);
     } finally {
@@ -26,6 +33,17 @@ export const DashboardScreen = ({ navigation }: any) => {
 
   useEffect(() => {
     fetchSensors();
+
+    const interval = setInterval(async () => {
+      try {
+        const sensorList = await api.getAllDeviceData();
+        await fetchLatestForSensors(sensorList || []);
+      } catch (e) {
+        // keep silent for background polling
+      }
+    }, 10000);
+
+    return () => clearInterval(interval);
   }, []);
 
   const onRefresh = () => {
@@ -33,8 +51,33 @@ export const DashboardScreen = ({ navigation }: any) => {
     fetchSensors();
   };
 
+  const handleDeleteSensor = (sensor: any) => {
+    Alert.alert(
+      'Remover sensor',
+      `Deseja remover ${sensor.alias || sensor.mac || 'este sensor'}?`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Remover',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setDeletingId(sensor.id);
+              await api.deleteSensor(sensor.id);
+            } catch (e: any) {
+              Alert.alert('Erro', String(e?.response?.data?.message || e?.message || 'Não foi possível remover o sensor.'));
+            } finally {
+              setDeletingId(null);
+            }
+          }
+        }
+      ]
+    );
+  };
+
   const renderSensorItem = ({ item }: any) => {
     const reading = currentReadings[item.id];
+    const identity = item.alias || item.mac || ((item as any).signature ? `SIG-${String((item as any).signature).slice(0, 8)}` : `Sensor-${String(item.id).slice(0, 6)}`);
     
     return (
       <TouchableOpacity 
@@ -42,11 +85,24 @@ export const DashboardScreen = ({ navigation }: any) => {
         onPress={() => navigation.navigate('Details', { sensor: item })}
       >
         <View style={styles.cardHeader}>
-          <Text style={styles.sensorName}>{item.alias || item.mac}</Text>
-          <View style={[styles.statusBadge, { backgroundColor: item.isActive ? '#dcfce7' : '#fee2e2' }]}>
-            <Text style={[styles.statusText, { color: item.isActive ? '#166534' : '#991b1b' }]}>
-              {item.isActive ? 'Ativo' : 'Offline'}
-            </Text>
+          <Text style={styles.sensorName}>{identity}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <View style={[styles.statusBadge, { backgroundColor: item.isActive ? '#dcfce7' : '#fee2e2' }]}>
+              <Text style={[styles.statusText, { color: item.isActive ? '#166534' : '#991b1b' }]}>
+                {item.isActive ? 'Ativo' : 'Offline'}
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={styles.deleteButton}
+              onPress={(e) => { e.stopPropagation?.(); handleDeleteSensor(item); }}
+              disabled={deletingId === item.id}
+            >
+              {deletingId === item.id ? (
+                <ActivityIndicator size="small" color="#ef4444" />
+              ) : (
+                <Text style={styles.deleteText}>Remover</Text>
+              )}
+            </TouchableOpacity>
           </View>
         </View>
         <Text style={styles.sensorType}>{item.deviceType}</Text>
@@ -55,12 +111,12 @@ export const DashboardScreen = ({ navigation }: any) => {
           <View style={styles.dataItem}>
             <Text style={styles.dataLabel}>Temperatura</Text>
             <Text style={styles.dataValue}>
-              {reading?.temperature ? `${reading.temperature.toFixed(1)} °C` : '-- °C'}
+              {typeof reading?.temperature === 'number' ? `${reading.temperature.toFixed(1)} °C` : '-- °C'}
             </Text>
           </View>
           <View style={styles.dataItem}>
-            <Text style={styles.dataLabel}>Bateria</Text>
-            <Text style={styles.dataValue}>{item.batteryLevel || '--'}%</Text>
+            <Text style={styles.dataLabel}>Umidade</Text>
+            <Text style={styles.dataValue}>{typeof reading?.humidity === 'number' ? `${reading.humidity.toFixed(1)} %` : '-- %'}</Text>
           </View>
         </View>
       </TouchableOpacity>
@@ -152,6 +208,8 @@ const styles = StyleSheet.create({
   sensorType: { fontSize: 12, color: '#64748b', marginBottom: 15 },
   statusBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
   statusText: { fontSize: 10, fontWeight: 'bold' },
+  deleteButton: { marginLeft: 10, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, backgroundColor: '#fee2e2' },
+  deleteText: { color: '#991b1b', fontSize: 10, fontWeight: '700' },
   dataRow: { flexDirection: 'row', justifyContent: 'space-between' },
   dataItem: { flex: 1 },
   dataLabel: { fontSize: 10, color: '#94a3b8', textTransform: 'uppercase', fontWeight: 'bold' },
