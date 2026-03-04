@@ -12,6 +12,7 @@ class BleService {
   private scanning = false;
   private stopFn: (() => void) | null = null;
   private recentAds: any[] = [];
+  private rawAds: any[] = [];
   private diagnostics: any[] = [];
   private backend: string = 'unknown';
   private lastState: string | null = null;
@@ -22,6 +23,72 @@ class BleService {
       this.diagnostics.unshift({ ts: Date.now(), kind, ...data });
       if (this.diagnostics.length > 300) this.diagnostics.pop();
     } catch (e) { }
+  }
+
+  private pushRawAd(raw: any) {
+    try {
+      const base64ToHex = (b64?: string | null) => {
+        if (!b64) return null;
+        try {
+          if (typeof Buffer !== 'undefined' && typeof Buffer.from === 'function') {
+            const buf = Buffer.from(b64, 'base64');
+            return Array.from(buf).map((x: number) => x.toString(16).padStart(2, '0')).join('').toUpperCase();
+          }
+          const atobFn = (global as any)?.atob || ((s: string) => { return Buffer.from(s, 'base64').toString('binary'); });
+          const rawStr = atobFn(b64);
+          return Array.from(rawStr).map((ch: any) => ch.charCodeAt(0).toString(16).padStart(2, '0')).join('').toUpperCase();
+        } catch (e) {
+          return null;
+        }
+      };
+
+      const manufB64 = raw?.manufacturerData || null;
+      let serviceData = raw?.serviceData || null;
+      let serviceDataHex: any = null;
+      if (serviceData && typeof serviceData === 'object') {
+        serviceDataHex = {} as any;
+        try {
+          for (const k of Object.keys(serviceData)) {
+            serviceDataHex[k] = base64ToHex(serviceData[k]);
+          }
+        } catch (e) { }
+      } else if (typeof serviceData === 'string') {
+        serviceDataHex = base64ToHex(serviceData);
+      }
+
+      const entry = {
+        ts: Date.now(),
+        raw: {
+          id: raw?.id || raw?.deviceId || null,
+          name: raw?.name || raw?.localName || raw?.deviceName || null,
+          rssi: raw?.rssi ?? raw?.RSSI ?? null,
+          manufacturerData: manufB64,
+          manufacturerHex: base64ToHex(manufB64),
+          serviceData: serviceData,
+          serviceDataHex,
+          serviceUUIDs: raw?.serviceUUIDs || raw?.serviceUuids || raw?.uuids || null,
+        }
+      };
+
+      this.rawAds.unshift(entry);
+      if (this.rawAds.length > 200) this.rawAds.pop();
+
+      try {
+        const MONITORED = ['FE94B4A4F6EF'];
+        const norm = (s?: string | null) => (s || '').replace(/[^0-9A-Fa-f]/g, '').toUpperCase();
+        const revPairs = (hex: string) => (hex.match(/.{1,2}/g)||[]).reverse().join('').toUpperCase();
+        const haystack = [entry.raw.manufacturerHex || '', entry.raw.serviceDataHex ? Object.values(entry.raw.serviceDataHex).join('') : ''].join('|').toUpperCase();
+        for (const m of MONITORED) {
+          const r = revPairs(m);
+          if (haystack.includes(m) || haystack.includes(r)) {
+            this.pushDiagnostic('monitored-mac-seen', { mac: m, macReversed: r, id: entry.raw.id, rssi: entry.raw.rssi });
+            try { console.log('[BleService] MONITORED MAC SEEN in advert:', { mac: m, macReversed: r, id: entry.raw.id, rssi: entry.raw.rssi, manufacturerHex: entry.raw.manufacturerHex, serviceDataHex: entry.raw.serviceDataHex }); } catch (e) {}
+          }
+        }
+      } catch (e) { }
+
+      return entry;
+    } catch (e) { return null; }
   }
 
   private hasMeasurement(parsed: any) {
@@ -226,8 +293,9 @@ class BleService {
             sub.remove();
             manager.startDeviceScan(null, { allowDuplicates: true, scanMode: 2 }, async (error: any, device: any) => {
               if (error) return;
+              const ent = this.pushRawAd(device);
               try {
-                console.log('[BleService] raw advert (onStateChange):', { id: device?.id, name: device?.name || device?.localName, rssi: device?.rssi, manufacturerData: device?.manufacturerData, serviceData: device?.serviceData, serviceUUIDs: device?.serviceUUIDs });
+                console.log('[BleService] raw advert (onStateChange):', ent?.raw || { id: device?.id, name: device?.name || device?.localName, rssi: device?.rssi });
               } catch (e) { }
               const parsed = parseAdvertising(device);
               if (parsed) {
@@ -259,8 +327,9 @@ class BleService {
       } else {
         manager.startDeviceScan(null, { allowDuplicates: true, scanMode: 2 }, async (error: any, device: any) => {
           if (error) return;
+          const ent = this.pushRawAd(device);
           try {
-            console.log('[BleService] raw advert:', { id: device?.id, name: device?.name || device?.localName, rssi: device?.rssi, manufacturerData: device?.manufacturerData, serviceData: device?.serviceData, serviceUUIDs: device?.serviceUUIDs });
+            console.log('[BleService] raw advert:', ent?.raw || { id: device?.id, name: device?.name || device?.localName, rssi: device?.rssi });
           } catch (e) { }
           const parsed = parseAdvertising(device);
           if (parsed) {
@@ -298,6 +367,8 @@ class BleService {
       const { startDeviceScan, stopDeviceScan, addListener } = require('expo-ble-scanner');
       this.backend = 'expo-ble-scanner';
       const listener = addListener('onScanResult', async (result: any) => {
+        const ent = this.pushRawAd(result);
+        try { console.log('[BleService] raw advert (expo):', ent?.raw || { id: result?.id, name: result?.name, rssi: result?.rssi }); } catch (e) {}
         const parsed = parseAdvertising(result);
         if (parsed) {
           try { this.recentAds.unshift({ ts: Date.now(), parsed }); if (this.recentAds.length > 100) this.recentAds.pop(); } catch (e) { }
@@ -334,9 +405,13 @@ class BleService {
 
   getRecentAds() { return [...this.recentAds]; }
 
+  getRawAds() { return [...this.rawAds]; }
+
   getDiagnostics() { return [...this.diagnostics]; }
 
   clearRecentAds() { this.recentAds = []; }
+
+  clearRawAds() { this.rawAds = []; }
 
   clearDiagnostics() { this.diagnostics = []; }
 

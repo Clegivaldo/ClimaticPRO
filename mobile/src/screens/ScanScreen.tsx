@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Modal, ScrollView } from 'react-native';
-import { View, Text, StyleSheet, TouchableOpacity, FlatList, ActivityIndicator, Alert, Platform } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, FlatList, ActivityIndicator, Alert, Platform, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import IconFallback from '../components/IconFallback';
 import * as Location from 'expo-location';
@@ -16,7 +16,9 @@ export const ScanScreen = ({ navigation }: any) => {
   const [connectingId, setConnectingId] = useState<string | null>(null);
   const [debugOpen, setDebugOpen] = useState(false);
   const [recentAds, setRecentAds] = useState<any[]>([]);
+  const [rawAds, setRawAds] = useState<any[]>([]);
   const [diagnostics, setDiagnostics] = useState<any[]>([]);
+  const [debugMacQuery, setDebugMacQuery] = useState('FE94B4A4F6EF');
   const [backendInfo, setBackendInfo] = useState({ backend: 'unknown', state: null as string | null });
   const scanTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastPostedReadingRef = useRef<Record<string, number>>({});
@@ -184,6 +186,34 @@ export const ScanScreen = ({ navigation }: any) => {
     }
   };
 
+  function decodeToHex(val: any) {
+    if (!val) return null;
+    if (typeof val === 'string') {
+      const s = val.trim();
+      const isBase64 = /^[A-Za-z0-9+/=\r\n]+$/.test(s) && s.length % 4 === 0;
+      if (isBase64) {
+        try {
+          const Buf = require('buffer').Buffer;
+          if (Buf && typeof Buf.from === 'function') {
+            const bytes: number[] = Array.from(Buf.from(s, 'base64'));
+            return bytes.map(b => (b < 16 ? '0' : '') + b.toString(16)).join('').toUpperCase();
+          }
+        } catch (e) { }
+        try {
+          const atobFn = typeof atob !== 'undefined' ? atob : (globalThis as any).atob;
+          if (typeof atobFn === 'function') {
+            const bin = atobFn(s);
+            const bytes: number[] = [];
+            for (let i = 0; i < bin.length; i++) bytes.push(bin.charCodeAt(i));
+            return bytes.map(b => (b < 16 ? '0' : '') + b.toString(16)).join('').toUpperCase();
+          }
+        } catch (e) { }
+      }
+      if (/^[0-9a-fA-F]+$/.test(s)) return s.toUpperCase();
+    }
+    return null;
+  }
+
   const strictDevices = devices.filter(shouldShowInMainList);
   const nearbyCandidates = devices
     .filter((d: any) => {
@@ -197,6 +227,54 @@ export const ScanScreen = ({ navigation }: any) => {
     .slice(0, 12);
   const strictKeys = new Set(strictDevices.map((d) => stableDeviceKey(d)));
   const visibleDevices = [...strictDevices, ...nearbyCandidates.filter((d) => !strictKeys.has(stableDeviceKey(d)))];
+
+  const normalizeMacQuery = (value?: string | null) => String(value || '').replace(/[^0-9A-Fa-f]/g, '').toUpperCase();
+
+  const debugMatchesQuery = (entry: any) => {
+    const query = normalizeMacQuery(debugMacQuery);
+    if (!query) return true;
+
+    const raw = decodeToHex(entry?.parsed?.raw?.manufacturerData)
+      || decodeToHex(entry?.parsed?.raw?.serviceData)
+      || String(entry?.parsed?.rawHex || '');
+
+    const fields = [
+      entry?.parsed?.realMac,
+      entry?.parsed?.mac,
+      entry?.parsed?.id,
+      raw,
+      JSON.stringify(entry?.parsed || {}),
+    ].map((v) => normalizeMacQuery(String(v || ''))).join('|');
+
+    return fields.includes(query);
+  };
+
+  const rawMatchesQuery = (entry: any) => {
+    const query = normalizeMacQuery(debugMacQuery);
+    if (!query) return true;
+
+    const raw = entry?.raw || {};
+    const fields = [
+      raw?.id,
+      raw?.name,
+      decodeToHex(raw?.manufacturerData),
+      decodeToHex(raw?.serviceData),
+      JSON.stringify(raw || {}),
+    ].map((v) => normalizeMacQuery(String(v || ''))).join('|');
+
+    return fields.includes(query);
+  };
+
+  const filteredRecentAds = recentAds.filter((a) => debugMatchesQuery(a));
+  const filteredRawAds = rawAds.filter((a) => rawMatchesQuery(a));
+  const filteredDiagnostics = diagnostics.filter((d) => {
+    const query = normalizeMacQuery(debugMacQuery);
+    if (!query) return true;
+    const fields = [d?.parsedRealMac, d?.realMac, d?.parsedMac, d?.mac, d?.sensorMac, JSON.stringify(d || {})]
+      .map((v) => normalizeMacQuery(String(v || '')))
+      .join('|');
+    return fields.includes(query);
+  });
 
   const startScan = async () => {
     setIsScanning(true);
@@ -332,40 +410,12 @@ export const ScanScreen = ({ navigation }: any) => {
     try { setRecentAds(bleService.getRecentAds()); } catch (e) { setRecentAds([]); }
   };
 
-  const refreshDiagnostics = () => {
-    try { setDiagnostics(bleService.getDiagnostics()); } catch (e) { setDiagnostics([]); }
+  const refreshRawAds = () => {
+    try { setRawAds(bleService.getRawAds()); } catch (e) { setRawAds([]); }
   };
 
-  const decodeToHex = (val: any) => {
-    if (!val) return null;
-    // string base64 or hex
-    if (typeof val === 'string') {
-      const s = val.trim();
-      const isBase64 = /^[A-Za-z0-9+/=\r\n]+$/.test(s) && s.length % 4 === 0;
-      if (isBase64) {
-        try {
-          // try Buffer first
-          // eslint-disable-next-line @typescript-eslint/no-var-requires
-          const Buf = require('buffer').Buffer;
-          if (Buf && typeof Buf.from === 'function') {
-            const bytes: number[] = Array.from(Buf.from(s, 'base64'));
-            return bytes.map(b => (b < 16 ? '0' : '') + b.toString(16)).join('').toUpperCase();
-          }
-        } catch (e) { }
-        try {
-          const atobFn = typeof atob !== 'undefined' ? atob : (globalThis as any).atob;
-          if (typeof atobFn === 'function') {
-            const bin = atobFn(s);
-            const bytes: number[] = [];
-            for (let i = 0; i < bin.length; i++) bytes.push(bin.charCodeAt(i));
-            return bytes.map(b => (b < 16 ? '0' : '') + b.toString(16)).join('').toUpperCase();
-          }
-        } catch (e) { }
-      }
-      // looks like hex already
-      if (/^[0-9a-fA-F]+$/.test(s)) return s.toUpperCase();
-    }
-    return null;
+  const refreshDiagnostics = () => {
+    try { setDiagnostics(bleService.getDiagnostics()); } catch (e) { setDiagnostics([]); }
   };
 
   const copyToClipboard = async (text: string) => {
@@ -564,7 +614,7 @@ export const ScanScreen = ({ navigation }: any) => {
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Buscar Sensores</Text>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <TouchableOpacity onPress={() => { refreshRecentAds(); refreshDiagnostics(); refreshBackendInfo(); setDebugOpen(true); }} style={[styles.refreshButton, { marginRight: 8 }]}>
+            <TouchableOpacity onPress={() => { refreshRecentAds(); refreshRawAds(); refreshDiagnostics(); refreshBackendInfo(); setDebugOpen(true); }} style={[styles.refreshButton, { marginRight: 8 }]}>
               <IconFallback name="Activity" size={20} color="#64748b" />
             </TouchableOpacity>
             <TouchableOpacity onPress={startScan} disabled={isScanning} style={styles.refreshButton}>
@@ -613,13 +663,13 @@ export const ScanScreen = ({ navigation }: any) => {
             <Text style={{ fontSize: 18, fontWeight: 'bold' }}>Debug BLE — anúncios recentes</Text>
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
               <TouchableOpacity
-                onPress={() => { refreshRecentAds(); refreshDiagnostics(); }}
+                onPress={() => { refreshRecentAds(); refreshRawAds(); refreshDiagnostics(); }}
                 style={{ paddingHorizontal: 10, paddingVertical: 6, backgroundColor: '#eef2ff', borderRadius: 8, marginRight: 8 }}
               >
                 <Text style={{ color: '#1e3a8a', fontWeight: '700', fontSize: 12 }}>Atualizar</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                onPress={() => { try { bleService.clearDiagnostics(); bleService.clearRecentAds(); } catch (e) { } refreshRecentAds(); refreshDiagnostics(); }}
+                onPress={() => { try { bleService.clearDiagnostics(); bleService.clearRecentAds(); bleService.clearRawAds(); } catch (e) { } refreshRecentAds(); refreshRawAds(); refreshDiagnostics(); }}
                 style={{ paddingHorizontal: 10, paddingVertical: 6, backgroundColor: '#fee2e2', borderRadius: 8, marginRight: 8 }}
               >
                 <Text style={{ color: '#991b1b', fontWeight: '700', fontSize: 12 }}>Limpar</Text>
@@ -630,11 +680,25 @@ export const ScanScreen = ({ navigation }: any) => {
             </View>
           </View>
           <ScrollView style={{ marginTop: 12 }}>
+            <View style={{ marginBottom: 12, backgroundColor: '#fff', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, padding: 10 }}>
+              <Text style={{ fontSize: 12, color: '#334155', fontWeight: '700', marginBottom: 6 }}>Filtro por MAC (Debug)</Text>
+              <TextInput
+                value={debugMacQuery}
+                onChangeText={setDebugMacQuery}
+                autoCapitalize="characters"
+                autoCorrect={false}
+                style={{ borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, color: '#0f172a', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace' }}
+                placeholder="FE:94:B4:A1:F6:EF"
+                placeholderTextColor="#94a3b8"
+              />
+              <Text style={{ fontSize: 11, color: '#64748b', marginTop: 6 }}>Filtrando por: {debugMacQuery || 'todos'}</Text>
+            </View>
+
             <Text style={{ fontSize: 15, fontWeight: '700', marginBottom: 8 }}>Diagnóstico de fluxo</Text>
-            {diagnostics.length === 0 ? (
+            {filteredDiagnostics.length === 0 ? (
               <Text style={{ color: '#64748b', marginBottom: 12 }}>Sem eventos de diagnóstico ainda.</Text>
             ) : (
-              diagnostics.map((d, i) => (
+              filteredDiagnostics.map((d, i) => (
                 <View key={`diag-${i}`} style={{ padding: 10, marginBottom: 8, backgroundColor: '#f8fafc', borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0' }}>
                   <Text style={{ fontSize: 11, color: '#334155' }}>{new Date(d.ts).toLocaleTimeString()} • {String(d.kind || '').toUpperCase()}</Text>
                   <Text style={{ fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace', marginTop: 4 }}>
@@ -645,11 +709,11 @@ export const ScanScreen = ({ navigation }: any) => {
             )}
 
             <Text style={{ fontSize: 15, fontWeight: '700', marginBottom: 8, marginTop: 6 }}>Anúncios parseados</Text>
-            {recentAds.length === 0 ? (
+            {filteredRecentAds.length === 0 ? (
               <Text style={{ color: '#64748b' }}>Nenhum anúncio detectado ainda.</Text>
             ) : (
-              recentAds.map((a, i) => (
-                <View key={i} style={{ padding: 12, marginBottom: 8, backgroundColor: '#fff', borderRadius: 8, borderWidth: 1, borderColor: '#e6eef9' }}>
+              filteredRecentAds.map((a, i) => (
+                <View key={i} style={{ padding: 12, marginBottom: 8, backgroundColor: '#fff', borderRadius: 8, borderWidth: 1, borderColor: '#197fe6' }}>
                   <Text style={{ fontSize: 12, color: '#333' }}>{new Date(a.ts).toLocaleString()}</Text>
                   <Text style={{ fontWeight: '600', marginTop: 6 }}>{a.parsed?.name || a.parsed?.id || 'unknown'}</Text>
                   <Text style={{ fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace', marginTop: 6 }}>{JSON.stringify(a.parsed)}</Text>
@@ -704,6 +768,21 @@ export const ScanScreen = ({ navigation }: any) => {
                       <Text style={{ color: '#064e3b', fontWeight: '600' }}>Adicionar por assinatura</Text>
                     </TouchableOpacity>
                   </View>
+                </View>
+              ))
+            )}
+
+            <Text style={{ fontSize: 15, fontWeight: '700', marginBottom: 8, marginTop: 10 }}>Anúncios brutos (sem parser)</Text>
+            {filteredRawAds.length === 0 ? (
+              <Text style={{ color: '#64748b' }}>Nenhum anúncio bruto correspondente ao filtro.</Text>
+            ) : (
+              filteredRawAds.slice(0, 60).map((a, i) => (
+                <View key={`raw-${i}`} style={{ padding: 12, marginBottom: 8, backgroundColor: '#fff', borderRadius: 8, borderWidth: 1, borderColor: '#f59e0b' }}>
+                  <Text style={{ fontSize: 12, color: '#333' }}>{new Date(a.ts).toLocaleString()}</Text>
+                  <Text style={{ fontWeight: '600', marginTop: 4 }}>{a.raw?.name || a.raw?.id || 'unknown'}</Text>
+                  <Text style={{ fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace', marginTop: 4 }}>id={String(a.raw?.id || '--')} rssi={String(a.raw?.rssi ?? '--')}</Text>
+                  <Text style={{ fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace', marginTop: 4 }}>mfgHex={decodeToHex(a.raw?.manufacturerData) || '--'}</Text>
+                  <Text style={{ fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace', marginTop: 4 }}>svcHex={decodeToHex(a.raw?.serviceData) || '--'}</Text>
                 </View>
               ))
             )}
