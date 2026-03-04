@@ -19,8 +19,10 @@ export const ScanScreen = ({ navigation }: any) => {
   const [diagnostics, setDiagnostics] = useState<any[]>([]);
   const [backendInfo, setBackendInfo] = useState({ backend: 'unknown', state: null as string | null });
   const scanTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastPostedReadingRef = useRef<Record<string, number>>({});
   const setReading = useSensorStore(state => state.setReading);
   const sensors = useSensorStore(state => state.sensors);
+  const getCollectionIntervalMs = useSensorStore(state => state.getCollectionIntervalMs);
 
   const normalizeMac = (value?: string | null) => {
     if (!value) return null;
@@ -127,14 +129,74 @@ export const ScanScreen = ({ navigation }: any) => {
     return existsByMac || existsBySig;
   };
 
+  const findExistingSensorForDevice = (device: any) => {
+    const registrationMac = registrationMacFor(device);
+    if (registrationMac) {
+      const byMac = sensors.find((s: any) => String(s?.mac || '').toUpperCase() === String(registrationMac).toUpperCase());
+      if (byMac) return byMac;
+    }
+
+    const type = String(device?.type || '').toUpperCase();
+    const advSignature = String(device?.advSignature || '').trim();
+    const rawSignature = String(device?.rawHex || '').replace(/[^0-9A-Fa-f]/g, '').toUpperCase();
+    const signatureToUse = advSignature || (rawSignature.length >= 12 ? rawSignature : '');
+    const shouldUseSignature = type.includes('CANDIDATE') && signatureToUse.length >= 8;
+
+    if (shouldUseSignature) {
+      const bySignature = sensors.find((s: any) => String((s as any)?.signature || '') === signatureToUse);
+      if (bySignature) return bySignature;
+    }
+
+    return null;
+  };
+
+  const maybePersistDiscoveredReading = async (device: any) => {
+    const hasTemp = typeof device?.temperature === 'number';
+    const hasHum = typeof device?.humidity === 'number';
+    if (!hasTemp && !hasHum) return;
+
+    const sensor = findExistingSensorForDevice(device);
+    if (!sensor?.id) return;
+
+    const lastTs = lastPostedReadingRef.current[sensor.id] || 0;
+    const now = Date.now();
+    const intervalMs = getCollectionIntervalMs(sensor.id);
+    if (now - lastTs < intervalMs) return;
+
+    lastPostedReadingRef.current[sensor.id] = now;
+
+    const timestamp = new Date(now).toISOString();
+    const payload: any = { timestamp };
+    if (hasTemp) payload.temperature = Number(device.temperature);
+    if (hasHum) payload.humidity = Number(device.humidity);
+
+    try {
+      await api.postSensorReading(sensor.id, payload);
+      setReading(sensor.id, {
+        id: `scan-${sensor.id}-${now}`,
+        sensorId: sensor.id,
+        temperature: hasTemp ? Number(device.temperature) : undefined,
+        humidity: hasHum ? Number(device.humidity) : undefined,
+        timestamp,
+      } as any);
+    } catch (e) {
+      lastPostedReadingRef.current[sensor.id] = 0;
+    }
+  };
+
   const strictDevices = devices.filter(shouldShowInMainList);
   const nearbyCandidates = devices
-    .filter((d: any) => String(d?.type || '').toUpperCase().includes('BLE_NEAR_CANDIDATE') && hasThermoHints(d) && !isAlreadyAdded(d))
+    .filter((d: any) => {
+      const isNearCandidate = String(d?.type || '').toUpperCase().includes('BLE_NEAR_CANDIDATE');
+      if (!isNearCandidate) return false;
+      if (isAlreadyAdded(d)) return false;
+      const strongSignal = typeof d?.rssi === 'number' && d.rssi >= -85;
+      return hasThermoHints(d) || strongSignal;
+    })
     .sort((a: any, b: any) => Number(b?.rssi ?? -999) - Number(a?.rssi ?? -999))
-    .slice(0, 6);
-  const visibleDevices = strictDevices.length > 0
-    ? strictDevices
-    : nearbyCandidates;
+    .slice(0, 12);
+  const strictKeys = new Set(strictDevices.map((d) => stableDeviceKey(d)));
+  const visibleDevices = [...strictDevices, ...nearbyCandidates.filter((d) => !strictKeys.has(stableDeviceKey(d)))];
 
   const startScan = async () => {
     setIsScanning(true);
@@ -190,6 +252,8 @@ export const ScanScreen = ({ navigation }: any) => {
         });
         // stop showing spinner once we have at least one device
         setIsScanning(false);
+
+        void maybePersistDiscoveredReading(device);
       });
 
       // Stop scan after a reasonable timeout to avoid infinite searching
@@ -364,7 +428,7 @@ export const ScanScreen = ({ navigation }: any) => {
           return;
         }
       } catch (e) {
-        // If we can't determine Bluetooth state, continue (simulation/dev)
+        // If we can't determine Bluetooth state here, proceed and let native scan flow validate it.
       }
 
       const deviceType = mapDeviceType(device.type);
@@ -511,8 +575,10 @@ export const ScanScreen = ({ navigation }: any) => {
 
         <View style={{ paddingHorizontal: 16, paddingVertical: 8, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e6eef9' }}>
           <Text style={{ fontSize: 12, color: '#475569' }}>BLE backend: {backendInfo.backend} — state: {backendInfo.state || 'unknown'}</Text>
-          {strictDevices.length === 0 && nearbyCandidates.length > 0 ? (
-            <Text style={{ fontSize: 12, color: '#92400e', marginTop: 4 }}>Modo fallback ativo: exibindo candidatos BLE próximos por intensidade de sinal.</Text>
+          {nearbyCandidates.length > 0 ? (
+            <Text style={{ fontSize: 12, color: '#92400e', marginTop: 4 }}>
+              Encontrados {nearbyCandidates.length} candidatos BLE próximos além dos sensores identificados.
+            </Text>
           ) : null}
         </View>
 

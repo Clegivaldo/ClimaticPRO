@@ -29,6 +29,7 @@ const createSensorSchema = z.union([
 const updateSensorSchema = z.object({
   alias: z.string().min(1).max(50).optional(),
   isActive: z.boolean().optional(),
+  mac: z.string().regex(/^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$/, 'Invalid MAC address').optional(),
 });
 
 const paginationSchema = z.object({
@@ -175,6 +176,13 @@ router.patch('/:id', async (req: Request, res: Response) => {
       message: 'Sensor updated successfully'
     });
   } catch (error) {
+    if ((error as any)?.code === 'P2002') {
+      return res.status(409).json({
+        code: 409,
+        message: 'Sensor with this MAC address already exists for this user'
+      });
+    }
+
     console.error('Error updating sensor:', error);
     return res.status(500).json({
       code: 500,

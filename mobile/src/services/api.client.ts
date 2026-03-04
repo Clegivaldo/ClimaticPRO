@@ -5,7 +5,7 @@ import Constants from 'expo-constants';
 const API_BASE_URL =
   process.env.EXPO_PUBLIC_API_URL ||
   Constants.expoConfig?.extra?.EXPO_PUBLIC_API_URL ||
-  'http://10.11.12.34:3001/api/v1';
+  'http://10.11.12.46:3001/api/v1';
 
 console.log('[api.client] Initializing with API_BASE_URL:', API_BASE_URL);
 

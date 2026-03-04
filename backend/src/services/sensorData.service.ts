@@ -1,4 +1,5 @@
 import { prisma } from '../utils/prisma';
+import { checkReadingForAlerts } from './alert.service';
 
 /**
  * Service for managing sensor readings
@@ -29,7 +30,7 @@ export interface HistoryQueryParams {
  * Store a single sensor reading
  */
 export async function createReading(data: CreateReadingData) {
-  return prisma.sensorReading.create({
+  const reading = await prisma.sensorReading.create({
     data: {
       sensorId: data.sensorId,
       temperature: data.temperature,
@@ -42,6 +43,9 @@ export async function createReading(data: CreateReadingData) {
       timestamp: data.timestamp || new Date()
     }
   });
+
+  await checkReadingForAlerts(reading);
+  return reading;
 }
 
 /**

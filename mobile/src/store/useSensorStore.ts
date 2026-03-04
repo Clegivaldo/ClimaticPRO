@@ -13,6 +13,8 @@ export interface Sensor {
   deviceType: string;
   batteryLevel?: number;
   lastSeenAt?: string;
+  lastReadingAt?: string | null;
+  readingCount?: number;
   isActive: boolean;
 }
 
@@ -28,17 +30,30 @@ export interface SensorReading {
 interface SensorState {
   sensors: Sensor[];
   currentReadings: Record<string, SensorReading>;
+  collectionIntervalsSec: Record<string, number>;
   lastUpdated: string | null;
   setSensors: (sensors: Sensor[]) => void;
   updateSensor: (sensorId: string, data: Partial<Sensor>) => void;
   setReading: (sensorId: string, reading: SensorReading) => void;
+  getCollectionIntervalMs: (sensorId: string) => number;
+  setCollectionIntervalSec: (sensorId: string, seconds: number) => void;
 }
+
+const DEFAULT_COLLECTION_SEC = 60;
+const MIN_COLLECTION_SEC = 10;
+const MAX_COLLECTION_SEC = 1800;
+
+const clampCollectionSec = (seconds: number) => {
+  if (!Number.isFinite(seconds)) return DEFAULT_COLLECTION_SEC;
+  return Math.min(MAX_COLLECTION_SEC, Math.max(MIN_COLLECTION_SEC, Math.round(seconds)));
+};
 
 export const useSensorStore = create<SensorState>()(
   persist(
     (set) => ({
       sensors: [],
       currentReadings: {},
+      collectionIntervalsSec: {},
       lastUpdated: null,
       setSensors: (sensors) => set({ sensors, lastUpdated: new Date().toISOString() }),
       updateSensor: (sensorId, data) => set((state) => ({
@@ -46,6 +61,16 @@ export const useSensorStore = create<SensorState>()(
       })),
       setReading: (sensorId, reading) => set((state) => ({
         currentReadings: { ...state.currentReadings, [sensorId]: reading }
+      })),
+      getCollectionIntervalMs: (sensorId) => {
+        const sec = useSensorStore.getState().collectionIntervalsSec[sensorId] ?? DEFAULT_COLLECTION_SEC;
+        return clampCollectionSec(sec) * 1000;
+      },
+      setCollectionIntervalSec: (sensorId, seconds) => set((state) => ({
+        collectionIntervalsSec: {
+          ...state.collectionIntervalsSec,
+          [sensorId]: clampCollectionSec(seconds),
+        }
       })),
     }),
     {

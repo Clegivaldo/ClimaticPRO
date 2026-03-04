@@ -294,8 +294,8 @@ function parseKnownJaaleeLayouts(bytes: number[]) {
       const macAfter = formatMacFromBytes(bytes, base + 4);
       return {
         type: 'JHT_UP_39F5',
-        mac: macAfter,
-        hasExplicitMac: false,
+        mac: normalizeMac(macAfter),
+        hasExplicitMac: !!normalizeMac(macAfter),
         temperature: tempHum.temperature,
         humidity: tempHum.humidity,
       };
@@ -324,8 +324,8 @@ function parseKnownJaaleeLayouts(bytes: number[]) {
       const macAfter = formatMacFromBytes(bytes, base + 4);
       return {
         type: 'WIFI_PT100_35F5',
-        mac: macAfter,
-        hasExplicitMac: false,
+        mac: normalizeMac(macAfter),
+        hasExplicitMac: !!normalizeMac(macAfter),
         temperature: Number(temp.toFixed(2)),
       };
     };
@@ -425,6 +425,14 @@ function pickMacCandidateFromPayload(bytes: number[]) {
   return best;
 }
 
+function hasStrongJaaleeMarker(bytes: number[]) {
+  return !!parseJaaleeIBeacon(bytes)
+    || containsMarker(bytes, 0xF5, 0x25)
+    || containsMarker(bytes, 0x39, 0xF5)
+    || containsMarker(bytes, 0x35, 0xF5)
+    || bytesToHex(bytes).includes('4A41414C4545');
+}
+
 function readUint16BE(bytes: number[], offset: number) {
   if (offset + 1 >= bytes.length) return null;
   return (bytes[offset] << 8) | bytes[offset + 1];
@@ -485,11 +493,10 @@ export function parseAdvertising(ad: any) {
   if (!(jaaleeCandidate || hasJaaleeServiceHint || hasThermoNameHint)) {
     // Controlled proximity fallback: allow only near BLE devices with sensor-specific hints.
     const nearBySignal = typeof rawRssi === 'number' && rawRssi >= -85;
-    const hasMacLikeId = !!macFromId;
     const hasLikelySensorName = /JHT|JAALEE|THERMO|BEACON|F525|39F5|35F5|PT100/i.test(String(localName || ''));
     const hasLikelyBlePayload = payloadMarkerHint;
     const blockedByName = /EPSON|PRINTER|HP-|DESKTOP|LAPTOP|TV|SPEAKER/i.test(String(localName || ''));
-    if (!(nearBySignal && hasMacLikeId && (hasLikelySensorName || hasLikelyBlePayload)) || blockedByName) return null;
+    if (!(nearBySignal && (hasLikelySensorName || hasLikelyBlePayload)) || blockedByName) return null;
 
     return {
       id: macFromId || deviceId,
@@ -505,11 +512,17 @@ export function parseAdvertising(ad: any) {
   }
 
   let bestPayloadMac: string | null = null;
+  let bestPayloadMacFromStrongMarker: string | null = null;
   for (const bytes of payloadCandidates) {
     const candidate = pickMacCandidateFromPayload(bytes);
     if (candidate) {
-      bestPayloadMac = candidate;
-      break;
+      if (!bestPayloadMac) bestPayloadMac = candidate;
+      if (!bestPayloadMacFromStrongMarker && hasStrongJaaleeMarker(bytes)) {
+        bestPayloadMacFromStrongMarker = candidate;
+      }
+      if (!bestPayloadMacFromStrongMarker) {
+        bestPayloadMac = candidate;
+      }
     }
   }
 
@@ -518,8 +531,12 @@ export function parseAdvertising(ad: any) {
     const parsedKnown = parseKnownJaaleeLayouts(bytes);
     if (parsedKnown) {
       const payloadMac = pickMacCandidateFromPayload(bytes);
+      const strongMarkerMac = hasStrongJaaleeMarker(bytes) ? payloadMac : null;
       const preferPayloadMac = !!parsedKnown?.hasExplicitMac;
-      const stableMac = normalizeMac(parsedKnown.mac) || (preferPayloadMac ? payloadMac : null) || mac;
+      const stableMac = normalizeMac(parsedKnown.mac)
+        || (preferPayloadMac ? payloadMac : null)
+        || strongMarkerMac
+        || mac;
       const advSignature = getAdvSignature(bytes, localName || ad.localName || ad.name || '', parsedKnown);
       const parsed: any = {
         id: stableMac || deviceId,
@@ -684,7 +701,7 @@ export function parseAdvertising(ad: any) {
 
   // Controlled fallback: expose Jaalee-like device even when numeric decoding fails
   // This prevents "Nenhum dispositivo encontrado" while still filtering non-Jaalee packets.
-  const fallbackMac = mac || normalizeMac(bestPayloadMac);
+  const fallbackMac = normalizeMac(bestPayloadMacFromStrongMarker) || normalizeMac(bestPayloadMac) || mac;
   const fallbackSignature = payloadCandidates.length ? getAdvSignature(payloadCandidates[0], localName || ad.localName || ad.name || '') : null;
   return {
     id: fallbackMac || deviceId,

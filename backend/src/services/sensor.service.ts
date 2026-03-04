@@ -18,6 +18,7 @@ export interface CreateSensorData {
 export interface UpdateSensorData {
   alias?: string;
   isActive?: boolean;
+  mac?: string;
 }
 
 export interface PaginationParams {
@@ -66,19 +67,33 @@ export async function getSensors(userId: string, params: PaginationParams = {}) 
       take: limit,
       orderBy: { createdAt: 'desc' },
       include: {
-        alertConfig: true
+        alertConfig: true,
+        readings: {
+          select: { timestamp: true },
+          orderBy: { timestamp: 'desc' },
+          take: 1,
+        },
+        _count: {
+          select: { readings: true }
+        }
       }
     }),
     prisma.sensor.count({ where: { userId } })
   ]);
 
+  const enrichedItems = items.map((sensor: any) => ({
+    ...sensor,
+    readingCount: sensor._count?.readings ?? 0,
+    lastReadingAt: sensor.readings?.[0]?.timestamp ?? null,
+  }));
+
   return {
-    items,
+    items: enrichedItems,
     pagination: {
       page,
       limit,
       total,
-      hasMore: total > skip + items.length
+      hasMore: total > skip + enrichedItems.length
     }
   };
 }
@@ -103,7 +118,8 @@ export async function updateSensor(id: string, userId: string, data: UpdateSenso
     where: { id, userId },
     data: {
       alias: data.alias,
-      isActive: data.isActive
+      isActive: data.isActive,
+      mac: data.mac
     }
   });
 }

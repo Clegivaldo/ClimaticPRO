@@ -3,6 +3,23 @@ import { useAuthStore } from '../store/useAuthStore';
 import { useSensorStore } from '../store/useSensorStore';
 
 class ApiService {
+  async getAlertConfig(sensorId: string) {
+    const response = await apiClient.get(`/alerts/sensors/${sensorId}/config`);
+    return response.data.data;
+  }
+
+  async updateAlertConfig(sensorId: string, payload: {
+    isEnabled?: boolean;
+    tempMin?: number | null;
+    tempMax?: number | null;
+    humidityMin?: number | null;
+    humidityMax?: number | null;
+    cooldownMinutes?: number;
+  }) {
+    const response = await apiClient.patch(`/alerts/sensors/${sensorId}/config`, payload);
+    return response.data.data;
+  }
+
   async getVerificationCode(identifier: string) {
     const response = await apiClient.post('/auth/send-code', { identifier });
     return response.data;
@@ -45,6 +62,11 @@ class ApiService {
     return response.data;
   }
 
+  async syncJaaleeData() {
+    const response = await apiClient.post('/sync/jaalee/fetch');
+    return response.data?.data;
+  }
+
   async registerSensor(mac?: string, deviceType?: string, alias?: string, signature?: string) {
     const body: any = { deviceType };
     if (mac) body.mac = mac;
@@ -61,6 +83,12 @@ class ApiService {
     const response = await apiClient.delete(`/sensors/${sensorId}`);
     const currentSensors = useSensorStore.getState().sensors;
     useSensorStore.getState().setSensors(currentSensors.filter((s: any) => s.id !== sensorId));
+    return response.data;
+  }
+
+  async updateSensor(sensorId: string, payload: { alias?: string; isActive?: boolean; mac?: string }) {
+    const response = await apiClient.patch(`/sensors/${sensorId}`, payload);
+    useSensorStore.getState().updateSensor(sensorId, payload as any);
     return response.data;
   }
 

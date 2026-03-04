@@ -1,6 +1,7 @@
 import { prisma } from '../utils/prisma';
 import fs from 'fs';
 import path from 'path';
+import { checkReadingForAlerts } from './alert.service';
 
 const JAALEE_BASE = 'https://sensor.jaalee.com/v1/open';
 const TOKEN_FILE = path.join(__dirname, '..', '..', '.jaalee_token');
@@ -99,6 +100,18 @@ function normalizeHumidity(raw: number | null | undefined): number | null {
   return h;
 }
 
+function normalizeMac(raw: string | null | undefined): string {
+  const base = String(raw || '').trim().toUpperCase();
+  if (!base) return '';
+
+  const hexOnly = base.replace(/[^0-9A-F]/g, '');
+  if (hexOnly.length === 12) {
+    return hexOnly.match(/.{1,2}/g)?.join(':') || base;
+  }
+
+  return base.replace(/-/g, ':');
+}
+
 export async function importJaaleeToDb(
   items: JaaleeDeviceItem[],
   options?: { autoRegister?: boolean; userId?: string | null }
@@ -118,7 +131,7 @@ export async function importJaaleeToDb(
   }
 
   for (const it of items) {
-    const mac = (it.mac || it.bleMac || '').toString();
+    const mac = normalizeMac((it.mac || it.bleMac || '').toString());
     if (!mac) continue;
 
     // Try to find sensor owned by this user first (if userId provided)
@@ -169,19 +182,30 @@ export async function importJaaleeToDb(
     const temperature = normalizeTemperature(it.temperature ?? it.temperature);
     const humidity = normalizeHumidity(it.humidity ?? it.humidity);
 
-    const reading = await prisma.sensorReading.create({
-      data: {
+    let reading = await prisma.sensorReading.findFirst({
+      where: {
         sensorId: sensor.id,
         timestamp,
-        temperature,
-        humidity,
-        co2: typeof it.co2 !== 'undefined' ? Number(it.co2) : null,
-        pm25: typeof it.pm25 !== 'undefined' ? Number(it.pm25) : null,
-        tvoc: typeof it.tvocPpm !== 'undefined' ? Number(it.tvocPpm) : null,
-        pressure: typeof it.pressure !== 'undefined' ? Number(it.pressure) : null,
-        waterLevel: typeof it.water !== 'undefined' ? Number(it.water) : null,
       }
     });
+
+    if (!reading) {
+      reading = await prisma.sensorReading.create({
+        data: {
+          sensorId: sensor.id,
+          timestamp,
+          temperature,
+          humidity,
+          co2: typeof it.co2 !== 'undefined' ? Number(it.co2) : null,
+          pm25: typeof it.pm25 !== 'undefined' ? Number(it.pm25) : null,
+          tvoc: typeof it.tvocPpm !== 'undefined' ? Number(it.tvocPpm) : null,
+          pressure: typeof it.pressure !== 'undefined' ? Number(it.pressure) : null,
+          waterLevel: typeof it.water !== 'undefined' ? Number(it.water) : null,
+        }
+      });
+
+        await checkReadingForAlerts(reading);
+    }
 
     // update sensor lastSeenAt and battery if available
     try {

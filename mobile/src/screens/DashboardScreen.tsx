@@ -19,8 +19,22 @@ export const DashboardScreen = ({ navigation }: any) => {
     ));
   };
 
-  const fetchSensors = async () => {
+  const formatDateTime = (value?: string | null) => {
+    if (!value) return '--';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '--';
+    return date.toLocaleString('pt-BR');
+  };
+
+  const fetchSensors = async (options?: { withSync?: boolean }) => {
     try {
+      if (options?.withSync) {
+        try {
+          await api.syncJaaleeData();
+        } catch (syncError) {
+          console.log('Cloud sync skipped/failed:', syncError);
+        }
+      }
       const sensorList = await api.getAllDeviceData();
       await fetchLatestForSensors(sensorList || []);
     } catch (err) {
@@ -32,12 +46,11 @@ export const DashboardScreen = ({ navigation }: any) => {
   };
 
   useEffect(() => {
-    fetchSensors();
+    fetchSensors({ withSync: true });
 
     const interval = setInterval(async () => {
       try {
-        const sensorList = await api.getAllDeviceData();
-        await fetchLatestForSensors(sensorList || []);
+        await fetchSensors({ withSync: false });
       } catch (e) {
         // keep silent for background polling
       }
@@ -48,7 +61,7 @@ export const DashboardScreen = ({ navigation }: any) => {
 
   const onRefresh = () => {
     setRefreshing(true);
-    fetchSensors();
+    fetchSensors({ withSync: true });
   };
 
   const handleDeleteSensor = (sensor: any) => {
@@ -78,6 +91,8 @@ export const DashboardScreen = ({ navigation }: any) => {
   const renderSensorItem = ({ item }: any) => {
     const reading = currentReadings[item.id];
     const identity = item.alias || item.mac || ((item as any).signature ? `SIG-${String((item as any).signature).slice(0, 8)}` : `Sensor-${String(item.id).slice(0, 6)}`);
+    const lastSyncAt = reading?.timestamp || item.lastReadingAt || item.lastSeenAt || null;
+    const dataPoints = typeof item?.readingCount === 'number' ? item.readingCount : 0;
     
     return (
       <TouchableOpacity 
@@ -106,6 +121,8 @@ export const DashboardScreen = ({ navigation }: any) => {
           </View>
         </View>
         <Text style={styles.sensorType}>{item.deviceType}</Text>
+        <Text style={styles.metaText}>Última sincronização: {formatDateTime(lastSyncAt)}</Text>
+        <Text style={[styles.metaText, { marginBottom: 12 }]}>Pontos salvos: {dataPoints}</Text>
         
         <View style={styles.dataRow}>
           <View style={styles.dataItem}>
@@ -206,6 +223,7 @@ const styles = StyleSheet.create({
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 },
   sensorName: { fontSize: 18, fontWeight: 'bold', color: '#0f172a' },
   sensorType: { fontSize: 12, color: '#64748b', marginBottom: 15 },
+  metaText: { fontSize: 12, color: '#475569' },
   statusBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
   statusText: { fontSize: 10, fontWeight: 'bold' },
   deleteButton: { marginLeft: 10, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, backgroundColor: '#fee2e2' },

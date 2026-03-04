@@ -12,13 +12,13 @@ import { sendUserNotification } from './notification.service';
 
 export interface UpdateAlertConfigData {
   isEnabled?: boolean;
-  tempMin?: number;
-  tempMax?: number;
-  humidityMin?: number;
-  humidityMax?: number;
-  co2Max?: number;
-  pm25Max?: number;
-  tvocMax?: number;
+  tempMin?: number | null;
+  tempMax?: number | null;
+  humidityMin?: number | null;
+  humidityMax?: number | null;
+  co2Max?: number | null;
+  pm25Max?: number | null;
+  tvocMax?: number | null;
   cooldownMinutes?: number;
 }
 
@@ -130,7 +130,7 @@ export async function checkReadingForAlerts(reading: SensorReading) {
       finalAlerts.push(createdAlert);
       
       // TODO: Requirement 7.7: Send push notification via FCM
-      await sendAlertNotification(sensor.userId, createdAlert);
+      await sendAlertNotification(sensor.userId, createdAlert, sensor.alias || sensor.mac || sensor.id);
     }
   }
 
@@ -238,9 +238,9 @@ export async function acknowledgeAlert(alertId: string, userId: string) {
  * Send alert notifications to the user
  * Requirement 7.7: Push notifications via FCM
  */
-async function sendAlertNotification(userId: string, alert: any) {
+async function sendAlertNotification(userId: string, alert: any, sensorName: string) {
   const title = `Alert: ${alert.parameter.toUpperCase()}`;
-  const body = `${alert.parameter} is ${alert.condition.toLowerCase().replace('_', ' ')} threshold (${alert.value} vs ${alert.threshold})`;
+  const body = `${sensorName}: ${alert.parameter} ${alert.condition.toLowerCase().replace('_', ' ')} (${alert.value} vs ${alert.threshold})`;
   
   await sendUserNotification(userId, title, body, {
     type: 'alert',

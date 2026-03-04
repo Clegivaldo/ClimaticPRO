@@ -29,6 +29,12 @@ class BleService {
       .some(k => typeof parsed?.[k] === 'number');
   }
 
+  private normalizeMac(value?: string | null) {
+    const compact = String(value || '').replace(/[^0-9A-Fa-f]/g, '').toUpperCase();
+    if (compact.length !== 12) return null;
+    return compact.match(/.{1,2}/g)?.join(':') || null;
+  }
+
   private buildReadingPayload(parsed: any) {
     const payload: any = {
       timestamp: new Date().toISOString(),
@@ -83,6 +89,17 @@ class BleService {
       const payload = this.buildReadingPayload(parsed);
       this.setLocalReading(found.id, payload);
 
+      const discoveredMac = this.normalizeMac(parsed?.realMac || parsed?.mac || parsed?.id);
+      if (!found?.mac && discoveredMac) {
+        try {
+          await api.updateSensor(found.id, { mac: discoveredMac });
+          useSensorStore.getState().updateSensor(found.id, { mac: discoveredMac } as any);
+          this.pushDiagnostic('mac-promoted', { sensorId: found.id, mac: discoveredMac });
+        } catch (e) {
+          this.pushDiagnostic('mac-promote-failed', { sensorId: found.id, mac: discoveredMac, error: String((e as any)?.message || e) });
+        }
+      }
+
       this.pushDiagnostic('match-found', {
         sensorId: found.id,
         sensorMac: found.mac,
@@ -108,7 +125,7 @@ class BleService {
       const sensorId = found.id;
       const now = Date.now();
       const lastPost = this.lastPostTimes.get(sensorId) || 0;
-      const THROTTLE_MS = 60000; // Only post once per minute
+      const THROTTLE_MS = useSensorStore.getState().getCollectionIntervalMs(sensorId);
 
       if (now - lastPost < THROTTLE_MS) {
         this.pushDiagnostic('throttled', {
@@ -362,10 +379,7 @@ class BleService {
     return null;
   }
 
-  /**
-   * Returns true if Bluetooth is powered on (for supported native libs).
-   * Falls back to true in simulation mode.
-   */
+  /** Returns true if Bluetooth is powered on (for supported native libs). */
   async isBluetoothOn(): Promise<boolean> {
     try {
       const BleManager = require('react-native-ble-plx').BleManager;
